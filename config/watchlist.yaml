@@ -1,0 +1,40 @@
+assets:
+  core:
+    - symbol: SPY
+      name: S&P 500 ETF
+      type: etf
+      role: us_equity_core
+    - symbol: QQQ
+      name: Nasdaq 100 ETF
+      type: etf
+      role: growth_equity
+    - symbol: GLD
+      name: Gold ETF
+      type: etf
+      role: gold
+    - symbol: TLT
+      name: 20+ Year Treasury ETF
+      type: etf
+      role: duration
+  sectors:
+    - XLK
+    - XLF
+    - XLE
+    - XLV
+    - XLY
+    - XLP
+    - XLU
+    - XLI
+    - XLC
+    - XLRE
+    - SOXX
+    - SMH
+  macro_proxy:
+    - UUP
+    - BIL
+    - HYG
+    - LQD
+  optional:
+    - BTC-USD
+    - USD/CNH
+
