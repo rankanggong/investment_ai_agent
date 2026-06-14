@@ -7,6 +7,7 @@ Phase 1 implements a price-only MVP:
 ```bash
 python -m app.main init-db
 python -m app.main collect prices --csv path/to/prices.csv
+python -m app.main collect prices --yfinance
 python -m app.main report daily
 ```
 
@@ -15,6 +16,16 @@ CSV imports require these columns:
 ```text
 symbol,date,open,high,low,close,adjusted_close,volume
 ```
+
+Live collection fetches six months of daily history for every asset in
+`config/watchlist.yaml`. To collect only selected symbols:
+
+```bash
+python -m app.main collect prices --yfinance --symbols SPY QQQ
+```
+
+Successful symbols are saved even when another symbol fails. Failed symbols are
+listed in the command output.
 
 The generated report is research support only. It does not provide trading advice, buy/sell instructions, or predictions.
 
