@@ -2,11 +2,13 @@ import argparse
 import os
 from pathlib import Path
 
+from app.collectors.google_news_collector import collect_google_news
 from app.collectors.price_collector import load_price_csv
 from app.collectors.yfinance_price_collector import collect_yfinance_prices
 from app.config import load_watchlist
 from app.jobs.daily_market_job import generate_daily_report
 from app.storage.db import initialize_database
+from app.storage.repositories.news_repo import NewsRepository
 from app.storage.repositories.price_repo import PriceRepository
 
 
@@ -32,6 +34,13 @@ def build_parser() -> argparse.ArgumentParser:
     prices.add_argument("--source", default="csv")
     prices.add_argument("--symbols", nargs="+")
     prices.add_argument("--watchlist", type=Path, default=DEFAULT_WATCHLIST_PATH)
+
+    news = collect_subparsers.add_parser("news", help="Collect market news")
+    news_source = news.add_mutually_exclusive_group(required=True)
+    news_source.add_argument("--google-rss", action="store_true")
+    news.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
+    news.add_argument("--symbols", nargs="+")
+    news.add_argument("--watchlist", type=Path, default=DEFAULT_WATCHLIST_PATH)
 
     report = subparsers.add_parser("report", help="Generate reports")
     report_subparsers = report.add_subparsers(dest="report_command", required=True)
@@ -85,6 +94,23 @@ def main(argv: list[str] | None = None) -> int:
                     "this can happen without prior requests."
                 )
                 print("Try another network later or import a CSV.")
+        return 0
+
+    if args.command == "collect" and args.collect_command == "news":
+        initialize_database(args.db)
+        symbols = (
+            [symbol.upper() for symbol in args.symbols]
+            if args.symbols
+            else [asset.symbol for asset in load_watchlist(args.watchlist).assets]
+        )
+        collection = collect_google_news(symbols)
+        NewsRepository(args.db).upsert_many(collection.items)
+        print(f"Imported {len(collection.items)} news rows into {args.db}")
+        if collection.failed_symbols:
+            print(f"Failed symbols: {', '.join(collection.failed_symbols)}")
+            for symbol in collection.failed_symbols:
+                reason = collection.failure_reasons.get(symbol, "Unknown error")
+                print(f"  {symbol}: {reason}")
         return 0
 
     if args.command == "report" and args.report_command == "daily":

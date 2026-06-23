@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass(frozen=True)
@@ -22,3 +23,32 @@ class SectorRotation:
     cyclical_vs_defensive: str
     notes: list[str]
 
+
+@dataclass(frozen=True)
+class MacroContext:
+    rates_context: str
+    usd_context: str
+    credit_context: str
+    gold_context: str
+    overall_regime: str
+    notes: list[str]
+
+
+@dataclass(frozen=True)
+class NewsItem:
+    title: str
+    url: str
+    publisher: str | None
+    published_at: datetime | None
+    related_symbol: str
+    source: str
+
+
+@dataclass(frozen=True)
+class NewsCluster:
+    topic: str
+    related_assets: list[str]
+    representative_headlines: list[str]
+    source_urls: list[str]
+    item_count: int
+    confidence: float

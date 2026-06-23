@@ -1,13 +1,15 @@
 from datetime import date
 from pathlib import Path
 
-from app.models.analysis import PriceSignal, SectorRotation
+from app.models.analysis import MacroContext, NewsCluster, PriceSignal, SectorRotation
 
 
 def render_daily_report(
     report_date: date,
     price_signals: dict[str, PriceSignal],
     sector_rotation: SectorRotation,
+    macro_context: MacroContext | None = None,
+    news_clusters: list[NewsCluster] | None = None,
 ) -> str:
     lines = [
         f"# Daily Market Brief - {report_date.isoformat()}",
@@ -65,11 +67,19 @@ def render_daily_report(
             "",
             "## 4. Macro Context",
             "",
-            "Deferred to Phase 3.",
+        ]
+    )
+    lines.extend(_render_macro_context(macro_context))
+    lines.extend(
+        [
             "",
             "## 5. Important News Clusters",
             "",
-            "Deferred to Phase 2.",
+        ]
+    )
+    lines.extend(_render_news_clusters(news_clusters or []))
+    lines.extend(
+        [
             "",
             "## 6. Fundamental Events",
             "",
@@ -106,3 +116,50 @@ def _format_list(values: list[str]) -> str:
         return "None"
     return ", ".join(values)
 
+
+def _render_macro_context(macro_context: MacroContext | None) -> list[str]:
+    if macro_context is None:
+        return ["Deferred to Phase 3."]
+
+    lines = [
+        f"Rates: {macro_context.rates_context}",
+        "",
+        f"USD: {macro_context.usd_context}",
+        "",
+        f"Credit: {macro_context.credit_context}",
+        "",
+        f"Gold: {macro_context.gold_context}",
+        "",
+        f"Regime: {macro_context.overall_regime}",
+    ]
+    if macro_context.notes:
+        lines.extend(["", "Notes:"])
+        lines.extend(f"- {note}" for note in macro_context.notes)
+    return lines
+
+
+def _render_news_clusters(news_clusters: list[NewsCluster]) -> list[str]:
+    if not news_clusters:
+        return ["No important news clusters available."]
+
+    lines: list[str] = []
+    for cluster in news_clusters:
+        if lines:
+            lines.append("")
+        lines.extend(
+            [
+                f"### {cluster.topic}",
+                "",
+                f"Assets: {_format_list(cluster.related_assets)}",
+                "",
+                f"Confidence: {cluster.confidence:.2f}",
+                "",
+                "Representative headlines:",
+            ]
+        )
+        for headline, url in zip(
+            cluster.representative_headlines,
+            cluster.source_urls,
+        ):
+            lines.append(f"- {headline} ({url})")
+    return lines
