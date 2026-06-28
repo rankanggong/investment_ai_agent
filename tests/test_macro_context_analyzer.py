@@ -33,3 +33,15 @@ def test_macro_context_identifies_supportive_risk_backdrop():
     assert result.gold_context == "gold_supported"
     assert result.overall_regime == "risk_on_with_macro_support"
     assert result.notes
+    assert result.evidence_rows[0].area == "Rates"
+    assert result.evidence_rows[0].signal == "duration_supported"
+    assert result.evidence_rows[0].evidence == "TLT 5D 2.50%"
+    assert result.evidence_rows[0].interpretation == (
+        "Long-duration proxies are firm, suggesting lower-rate support."
+    )
+    assert result.evidence_rows[2].area == "Credit"
+    assert result.evidence_rows[2].evidence == "HYG 5D 1.50% vs LQD 5D 0.40%"
+    assert result.evidence_rows[-1].area == "Regime"
+    assert result.evidence_rows[-1].evidence == (
+        "SPY 5D 3.00%; supportive components 3; pressure components 0"
+    )

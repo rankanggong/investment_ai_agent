@@ -6,6 +6,8 @@ from app.models.analysis import (
     FundamentalEvent,
     MacroContext,
     NewsCluster,
+    PlanImpact,
+    PlanImpactItem,
     PriceSignal,
     SectorRotation,
 )
@@ -19,6 +21,7 @@ def render_daily_report(
     news_clusters: list[NewsCluster] | None = None,
     fundamental_events: list[FundamentalEvent] | None = None,
     daily_signal_summary: DailySignalSummary | None = None,
+    plan_impact: PlanImpact | None = None,
 ) -> str:
     lines = [
         f"# Daily Market Brief - {report_date.isoformat()}",
@@ -108,7 +111,11 @@ def render_daily_report(
             "",
             "## 7. Impact On My Plan",
             "",
-            "Deferred to Phase 5.",
+        ]
+    )
+    lines.extend(_render_plan_impact(plan_impact))
+    lines.extend(
+        [
             "",
             "## 8. What To Read Manually",
             "",
@@ -176,6 +183,20 @@ def _render_macro_context(macro_context: MacroContext | None) -> list[str]:
     if macro_context.notes:
         lines.extend(["", "Notes:"])
         lines.extend(f"- {note}" for note in macro_context.notes)
+    if macro_context.evidence_rows:
+        lines.extend(
+            [
+                "",
+                "Evidence:",
+                "",
+                "| Area | Signal | Evidence | Interpretation |",
+                "|---|---|---|---|",
+            ]
+        )
+        for row in macro_context.evidence_rows:
+            lines.append(
+                f"| {row.area} | {row.signal} | {row.evidence} | {row.interpretation} |"
+            )
     return lines
 
 
@@ -195,7 +216,11 @@ def _render_news_clusters(news_clusters: list[NewsCluster]) -> list[str]:
                 "",
                 f"Items: {cluster.item_count}",
                 "",
+                f"Sources: {cluster.source_count}",
+                "",
                 f"Confidence: {cluster.confidence:.2f}",
+                "",
+                f"Why it matters: {cluster.why_it_matters or 'No deterministic explanation available.'}",
                 "",
                 "Representative headlines:",
             ]
@@ -205,6 +230,10 @@ def _render_news_clusters(news_clusters: list[NewsCluster]) -> list[str]:
             cluster.source_urls,
         ):
             lines.append(f"- {headline} ({url})")
+        manual_read_urls = cluster.manual_read_urls or cluster.source_urls
+        if manual_read_urls:
+            lines.extend(["", "Manual read:"])
+            lines.extend(f"- {url}" for url in manual_read_urls)
     return lines
 
 
@@ -217,8 +246,8 @@ def _render_fundamental_events(
         return ["No fundamental events detected from stored news."]
 
     lines = [
-        "| Event | Asset | Confidence | Headline | Source |",
-        "|---|---|---:|---|---|",
+        "| Event | Asset | Review Type | Confidence | Why It Matters | Headline | Source |",
+        "|---|---|---|---:|---|---|---|",
     ]
     for event in fundamental_events:
         source = (
@@ -228,6 +257,68 @@ def _render_fundamental_events(
         )
         lines.append(
             f"| {event.event_type} | {event.related_symbol} | "
-            f"{event.confidence:.2f} | {event.headline} | {source} |"
+            f"{event.review_type or 'fundamental_review'} | "
+            f"{event.confidence:.2f} | "
+            f"{event.why_it_matters or 'This event may affect fundamental assumptions.'} | "
+            f"{event.headline} | {source} |"
         )
+    return lines
+
+
+def _render_plan_impact(plan_impact: PlanImpact | None) -> list[str]:
+    if plan_impact is None:
+        return ["Deferred to Phase 5."]
+
+    lines = [
+        "Research support only. Not a buy/sell instruction.",
+        "",
+    ]
+    if not plan_impact.accumulation_review and not plan_impact.derisk_review:
+        lines.append("### No clear plan impact")
+        lines.append("")
+        if plan_impact.notes:
+            lines.extend(f"- {note}" for note in plan_impact.notes)
+        else:
+            lines.append("- No asset crossed accumulation or de-risk review thresholds.")
+        return lines
+
+    lines.extend(
+        _render_plan_impact_bucket(
+            "High-conviction accumulation review",
+            plan_impact.accumulation_review,
+        )
+    )
+    lines.append("")
+    lines.extend(
+        _render_plan_impact_bucket(
+            "High-conviction de-risk review",
+            plan_impact.derisk_review,
+        )
+    )
+    if plan_impact.notes:
+        lines.extend(["", "Notes:"])
+        lines.extend(f"- {note}" for note in plan_impact.notes)
+    return lines
+
+
+def _render_plan_impact_bucket(
+    title: str,
+    items: list[PlanImpactItem],
+) -> list[str]:
+    lines = [
+        f"### {title}",
+        "",
+    ]
+    if not items:
+        lines.append("No candidates.")
+        return lines
+
+    lines.extend(
+        [
+            "| Asset | Score | Evidence |",
+            "|---|---:|---|",
+        ]
+    )
+    for item in items:
+        lines.append(f"| {item.symbol} | {item.score} | {'; '.join(item.evidence)} |")
     return lines

@@ -1,4 +1,4 @@
-from app.models.analysis import MacroContext, PriceSignal
+from app.models.analysis import MacroContext, MacroEvidenceRow, PriceSignal
 
 
 def analyze_macro_context(signals: dict[str, PriceSignal]) -> MacroContext:
@@ -10,6 +10,14 @@ def analyze_macro_context(signals: dict[str, PriceSignal]) -> MacroContext:
         signals, rates_context, usd_context, credit_context
     )
     notes = _notes(rates_context, usd_context, credit_context, gold_context)
+    evidence_rows = _evidence_rows(
+        signals,
+        rates_context,
+        usd_context,
+        credit_context,
+        gold_context,
+        overall_regime,
+    )
 
     return MacroContext(
         rates_context=rates_context,
@@ -18,6 +26,7 @@ def analyze_macro_context(signals: dict[str, PriceSignal]) -> MacroContext:
         gold_context=gold_context,
         overall_regime=overall_regime,
         notes=notes,
+        evidence_rows=evidence_rows,
     )
 
 
@@ -125,3 +134,90 @@ def _return_5d(signals: dict[str, PriceSignal], symbol: str) -> float | None:
     if signal is None:
         return None
     return signal.return_5d
+
+
+def _evidence_rows(
+    signals: dict[str, PriceSignal],
+    rates_context: str,
+    usd_context: str,
+    credit_context: str,
+    gold_context: str,
+    overall_regime: str,
+) -> list[MacroEvidenceRow]:
+    supportive = sum(
+        [
+            rates_context == "duration_supported",
+            usd_context == "usd_weakening",
+            credit_context == "risk_appetite_supportive",
+        ]
+    )
+    pressure = sum(
+        [
+            rates_context == "rates_pressure",
+            usd_context == "usd_strengthening",
+            credit_context == "credit_stress",
+        ]
+    )
+
+    return [
+        MacroEvidenceRow(
+            area="Rates",
+            signal=rates_context,
+            evidence=f"TLT 5D {_format_percent(_return_5d(signals, 'TLT'))}",
+            interpretation=_interpretation(rates_context),
+        ),
+        MacroEvidenceRow(
+            area="USD",
+            signal=usd_context,
+            evidence=f"UUP 5D {_format_percent(_return_5d(signals, 'UUP'))}",
+            interpretation=_interpretation(usd_context),
+        ),
+        MacroEvidenceRow(
+            area="Credit",
+            signal=credit_context,
+            evidence=(
+                f"HYG 5D {_format_percent(_return_5d(signals, 'HYG'))} "
+                f"vs LQD 5D {_format_percent(_return_5d(signals, 'LQD'))}"
+            ),
+            interpretation=_interpretation(credit_context),
+        ),
+        MacroEvidenceRow(
+            area="Gold",
+            signal=gold_context,
+            evidence=f"GLD 5D {_format_percent(_return_5d(signals, 'GLD'))}",
+            interpretation=_interpretation(gold_context),
+        ),
+        MacroEvidenceRow(
+            area="Regime",
+            signal=overall_regime,
+            evidence=(
+                f"SPY 5D {_format_percent(_return_5d(signals, 'SPY'))}; "
+                f"supportive components {supportive}; pressure components {pressure}"
+            ),
+            interpretation=_interpretation(overall_regime),
+        ),
+    ]
+
+
+def _format_percent(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    return f"{value:.2%}"
+
+
+def _interpretation(context: str) -> str:
+    interpretation_by_context = {
+        "duration_supported": "Long-duration proxies are firm, suggesting lower-rate support.",
+        "rates_pressure": "Long-duration proxies are weak, suggesting rate pressure.",
+        "usd_weakening": "A weaker USD proxy is supportive for global risk assets and gold.",
+        "usd_strengthening": "A stronger USD proxy can pressure risk assets and gold.",
+        "risk_appetite_supportive": "High-yield credit is firm versus investment-grade credit.",
+        "credit_stress": "High-yield credit weakness points to risk appetite stress.",
+        "gold_supported": "Gold strength aligns with weaker USD or softer rate pressure.",
+        "gold_pressure": "Gold is under pressure from price weakness or USD strength.",
+        "risk_on_with_macro_support": "Risk assets are rising with support from macro proxies.",
+        "risk_off_with_macro_pressure": "Risk assets are falling while macro proxies show pressure.",
+        "mixed": "Proxy evidence is mixed and does not point to a clear regime.",
+        "unknown": "Required proxy data is missing or insufficient.",
+    }
+    return interpretation_by_context.get(context, "No deterministic interpretation available.")

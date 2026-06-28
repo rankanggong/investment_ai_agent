@@ -35,3 +35,8 @@ def test_news_cluster_analyzer_deduplicates_and_groups_by_symbol():
         "SPY rallies as Fed rate hopes lift market",
         "SPY gains as Fed hopes support stocks",
     ]
+    assert spy.source_count == 2
+    assert spy.why_it_matters == (
+        "2 stored headlines from 2 sources mention SPY, so this cluster may explain asset-specific attention."
+    )
+    assert spy.manual_read_urls == ["https://example.com/a", "https://example.com/b"]

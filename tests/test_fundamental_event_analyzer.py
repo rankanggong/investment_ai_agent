@@ -49,3 +49,9 @@ def test_fundamental_event_analyzer_detects_event_headlines():
     assert events[0].publisher == "Reuters"
     assert events[0].source_url == "https://example.com/a"
     assert events[0].confidence > 0.5
+    assert events[0].review_type == "earnings_review"
+    assert events[0].why_it_matters == (
+        "Earnings releases can reset revenue, margin, cash-flow, and valuation assumptions."
+    )
+    assert events[1].review_type == "guidance_review"
+    assert events[2].review_type == "regulatory_risk_review"

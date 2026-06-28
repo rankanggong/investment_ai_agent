@@ -5,6 +5,12 @@ Local financial research assistant for long-term investment research.
 Phase 1 implements a price-only MVP:
 
 ```bash
+cd /home/ssm-user/investment_ai_agent
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -e ".[dev]"
+
 python -m app.main init-db
 python -m app.main collect prices --csv path/to/prices.csv
 python -m app.main collect prices --yfinance

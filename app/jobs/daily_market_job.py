@@ -5,6 +5,7 @@ from app.analyzers.daily_signal_summary_analyzer import analyze_daily_signal_sum
 from app.analyzers.fundamental_event_analyzer import analyze_fundamental_events
 from app.analyzers.macro_context_analyzer import analyze_macro_context
 from app.analyzers.news_cluster_analyzer import analyze_news_clusters
+from app.analyzers.plan_impact_analyzer import analyze_plan_impact
 from app.analyzers.price_move_analyzer import analyze_price_moves
 from app.analyzers.sector_rotation_analyzer import analyze_sector_rotation
 from app.config import load_watchlist
@@ -33,6 +34,13 @@ def generate_daily_report(
     recent_news = NewsRepository(db_path).get_recent_items()
     news_clusters = analyze_news_clusters(recent_news)
     fundamental_events = analyze_fundamental_events(recent_news)
+    plan_impact = analyze_plan_impact(
+        signals,
+        sector_rotation,
+        macro_context,
+        news_clusters,
+        fundamental_events,
+    )
     daily_signal_summary = analyze_daily_signal_summary(
         signals,
         sector_rotation,
@@ -49,6 +57,7 @@ def generate_daily_report(
         news_clusters=news_clusters,
         fundamental_events=fundamental_events,
         daily_signal_summary=daily_signal_summary,
+        plan_impact=plan_impact,
     )
     path = write_daily_report(report_dir, effective_date, content)
     ReportRepository(db_path).insert_report(

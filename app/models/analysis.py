@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -32,6 +32,28 @@ class DailySignalSummary:
 
 
 @dataclass(frozen=True)
+class PlanImpactItem:
+    symbol: str
+    score: int
+    evidence: list[str]
+
+
+@dataclass(frozen=True)
+class PlanImpact:
+    accumulation_review: list[PlanImpactItem]
+    derisk_review: list[PlanImpactItem]
+    notes: list[str]
+
+
+@dataclass(frozen=True)
+class MacroEvidenceRow:
+    area: str
+    signal: str
+    evidence: str
+    interpretation: str
+
+
+@dataclass(frozen=True)
 class MacroContext:
     rates_context: str
     usd_context: str
@@ -39,6 +61,7 @@ class MacroContext:
     gold_context: str
     overall_regime: str
     notes: list[str]
+    evidence_rows: list[MacroEvidenceRow] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -59,6 +82,9 @@ class NewsCluster:
     source_urls: list[str]
     item_count: int
     confidence: float
+    source_count: int = 0
+    why_it_matters: str = ""
+    manual_read_urls: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -69,3 +95,5 @@ class FundamentalEvent:
     publisher: str | None
     source_url: str
     confidence: float
+    review_type: str = ""
+    why_it_matters: str = ""

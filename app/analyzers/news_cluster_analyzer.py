@@ -60,13 +60,17 @@ def _cluster_for_symbol(symbol: str, items: list[NewsItem]) -> NewsCluster:
     publishers = {item.publisher for item in items if item.publisher}
     headlines = [item.title for item in items[:3]]
     urls = [item.url for item in items[:3]]
+    source_count = len(publishers)
     return NewsCluster(
         topic=_topic(items),
         related_assets=[symbol],
         representative_headlines=headlines,
         source_urls=urls,
         item_count=len(items),
-        confidence=_confidence(len(items), len(publishers)),
+        confidence=_confidence(len(items), source_count),
+        source_count=source_count,
+        why_it_matters=_why_it_matters(symbol, len(items), source_count),
+        manual_read_urls=urls,
     )
 
 
@@ -89,3 +93,12 @@ def _normalize_title(title: str) -> str:
 
 def _confidence(item_count: int, publisher_count: int) -> float:
     return min(1.0, 0.35 + item_count * 0.15 + publisher_count * 0.15)
+
+
+def _why_it_matters(symbol: str, item_count: int, source_count: int) -> str:
+    item_word = "headline" if item_count == 1 else "headlines"
+    source_word = "source" if source_count == 1 else "sources"
+    return (
+        f"{item_count} stored {item_word} from {source_count} {source_word} mention "
+        f"{symbol}, so this cluster may explain asset-specific attention."
+    )
