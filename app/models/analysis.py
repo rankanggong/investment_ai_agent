@@ -25,6 +25,13 @@ class SectorRotation:
 
 
 @dataclass(frozen=True)
+class DailySignalSummary:
+    status: str
+    drivers: list[str]
+    reason: str
+
+
+@dataclass(frozen=True)
 class MacroContext:
     rates_context: str
     usd_context: str
@@ -51,4 +58,14 @@ class NewsCluster:
     representative_headlines: list[str]
     source_urls: list[str]
     item_count: int
+    confidence: float
+
+
+@dataclass(frozen=True)
+class FundamentalEvent:
+    event_type: str
+    related_symbol: str
+    headline: str
+    publisher: str | None
+    source_url: str
     confidence: float

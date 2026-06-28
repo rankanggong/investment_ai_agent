@@ -1,7 +1,14 @@
 from datetime import date
 from pathlib import Path
 
-from app.models.analysis import MacroContext, NewsCluster, PriceSignal, SectorRotation
+from app.models.analysis import (
+    DailySignalSummary,
+    FundamentalEvent,
+    MacroContext,
+    NewsCluster,
+    PriceSignal,
+    SectorRotation,
+)
 
 
 def render_daily_report(
@@ -10,17 +17,27 @@ def render_daily_report(
     sector_rotation: SectorRotation,
     macro_context: MacroContext | None = None,
     news_clusters: list[NewsCluster] | None = None,
+    fundamental_events: list[FundamentalEvent] | None = None,
+    daily_signal_summary: DailySignalSummary | None = None,
 ) -> str:
     lines = [
         f"# Daily Market Brief - {report_date.isoformat()}",
         "",
         "Research support only. Not investment advice.",
         "",
-        "## 1. Market Overview",
+        "## 0. What Matters Today",
         "",
-        "| Asset | 1D | 5D | 20D | Note |",
-        "|---|---:|---:|---:|---|",
     ]
+    lines.extend(_render_daily_signal_summary(daily_signal_summary))
+    lines.extend(
+        [
+            "",
+            "## 1. Market Overview",
+            "",
+            "| Asset | 1D | 5D | 20D | Note |",
+            "|---|---:|---:|---:|---|",
+        ]
+    )
 
     for symbol in sorted(price_signals):
         signal = price_signals[symbol]
@@ -83,7 +100,11 @@ def render_daily_report(
             "",
             "## 6. Fundamental Events",
             "",
-            "Deferred to Phase 4.",
+        ]
+    )
+    lines.extend(_render_fundamental_events(fundamental_events))
+    lines.extend(
+        [
             "",
             "## 7. Impact On My Plan",
             "",
@@ -115,6 +136,26 @@ def _format_list(values: list[str]) -> str:
     if not values:
         return "None"
     return ", ".join(values)
+
+
+def _render_daily_signal_summary(
+    daily_signal_summary: DailySignalSummary | None,
+) -> list[str]:
+    if daily_signal_summary is None:
+        daily_signal_summary = DailySignalSummary(
+            status="not_available",
+            drivers=["Summary was not generated."],
+            reason="Daily signal summary was not generated for this report.",
+        )
+
+    lines = [
+        f"Status: {daily_signal_summary.status}",
+        "",
+        "Drivers:",
+    ]
+    lines.extend(f"- {driver}" for driver in daily_signal_summary.drivers)
+    lines.extend(["", f"Reason: {daily_signal_summary.reason}"])
+    return lines
 
 
 def _render_macro_context(macro_context: MacroContext | None) -> list[str]:
@@ -152,6 +193,8 @@ def _render_news_clusters(news_clusters: list[NewsCluster]) -> list[str]:
                 "",
                 f"Assets: {_format_list(cluster.related_assets)}",
                 "",
+                f"Items: {cluster.item_count}",
+                "",
                 f"Confidence: {cluster.confidence:.2f}",
                 "",
                 "Representative headlines:",
@@ -162,4 +205,29 @@ def _render_news_clusters(news_clusters: list[NewsCluster]) -> list[str]:
             cluster.source_urls,
         ):
             lines.append(f"- {headline} ({url})")
+    return lines
+
+
+def _render_fundamental_events(
+    fundamental_events: list[FundamentalEvent] | None,
+) -> list[str]:
+    if fundamental_events is None:
+        return ["Deferred to Phase 4."]
+    if not fundamental_events:
+        return ["No fundamental events detected from stored news."]
+
+    lines = [
+        "| Event | Asset | Confidence | Headline | Source |",
+        "|---|---|---:|---|---|",
+    ]
+    for event in fundamental_events:
+        source = (
+            f"{event.publisher} ({event.source_url})"
+            if event.publisher
+            else event.source_url
+        )
+        lines.append(
+            f"| {event.event_type} | {event.related_symbol} | "
+            f"{event.confidence:.2f} | {event.headline} | {source} |"
+        )
     return lines

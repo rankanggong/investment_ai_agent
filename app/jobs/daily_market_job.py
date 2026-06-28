@@ -1,6 +1,8 @@
 from datetime import date
 from pathlib import Path
 
+from app.analyzers.daily_signal_summary_analyzer import analyze_daily_signal_summary
+from app.analyzers.fundamental_event_analyzer import analyze_fundamental_events
 from app.analyzers.macro_context_analyzer import analyze_macro_context
 from app.analyzers.news_cluster_analyzer import analyze_news_clusters
 from app.analyzers.price_move_analyzer import analyze_price_moves
@@ -28,14 +30,25 @@ def generate_daily_report(
         benchmark_symbol="SPY",
     )
     macro_context = analyze_macro_context(signals)
-    news_clusters = analyze_news_clusters(NewsRepository(db_path).get_recent_items())
-    effective_date = report_date or _latest_report_date(history) or date.today()
-    content = render_daily_report(
-        effective_date,
+    recent_news = NewsRepository(db_path).get_recent_items()
+    news_clusters = analyze_news_clusters(recent_news)
+    fundamental_events = analyze_fundamental_events(recent_news)
+    daily_signal_summary = analyze_daily_signal_summary(
         signals,
         sector_rotation,
         macro_context,
         news_clusters,
+        fundamental_events,
+    )
+    effective_date = report_date or _latest_report_date(history) or date.today()
+    content = render_daily_report(
+        report_date=effective_date,
+        price_signals=signals,
+        sector_rotation=sector_rotation,
+        macro_context=macro_context,
+        news_clusters=news_clusters,
+        fundamental_events=fundamental_events,
+        daily_signal_summary=daily_signal_summary,
     )
     path = write_daily_report(report_dir, effective_date, content)
     ReportRepository(db_path).insert_report(
