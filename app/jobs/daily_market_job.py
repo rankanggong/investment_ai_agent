@@ -1,6 +1,8 @@
 from datetime import date
 from pathlib import Path
 
+from app.analyzers.company_price_bounds_analyzer import analyze_company_price_bounds
+from app.analyzers.data_coverage_analyzer import analyze_data_coverage
 from app.analyzers.daily_signal_summary_analyzer import analyze_daily_signal_summary
 from app.analyzers.fundamental_event_analyzer import analyze_fundamental_events
 from app.analyzers.macro_context_analyzer import analyze_macro_context
@@ -32,8 +34,19 @@ def generate_daily_report(
     )
     macro_context = analyze_macro_context(signals)
     recent_news = NewsRepository(db_path).get_recent_items()
+    data_coverage = analyze_data_coverage(
+        price_history=history,
+        price_symbols=[asset.symbol for asset in watchlist.assets],
+        macro_symbols=["SPY", "TLT", "UUP", "HYG", "LQD", "GLD"],
+        popular_company_symbols=watchlist.symbols_for_group("popular_companies"),
+        news_item_count=len(recent_news),
+    )
     news_clusters = analyze_news_clusters(recent_news)
     fundamental_events = analyze_fundamental_events(recent_news)
+    company_price_bounds = analyze_company_price_bounds(
+        history,
+        watchlist.symbols_for_group("popular_companies"),
+    )
     plan_impact = analyze_plan_impact(
         signals,
         sector_rotation,
@@ -57,7 +70,9 @@ def generate_daily_report(
         news_clusters=news_clusters,
         fundamental_events=fundamental_events,
         daily_signal_summary=daily_signal_summary,
+        data_coverage=data_coverage,
         plan_impact=plan_impact,
+        company_price_bounds=company_price_bounds,
     )
     path = write_daily_report(report_dir, effective_date, content)
     ReportRepository(db_path).insert_report(

@@ -1,6 +1,10 @@
 from datetime import date
 
 from app.models.analysis import (
+    CompanyPriceBound,
+    CompanyPriceBounds,
+    DataCoverage,
+    DataCoverageRow,
     DailySignalSummary,
     FundamentalEvent,
     MacroContext,
@@ -78,6 +82,55 @@ def test_render_daily_report_includes_daily_signal_summary_before_market_overvie
         "Reason: No price, sector, macro, news, or fundamental event crossed review thresholds."
         in content
     )
+
+
+def test_render_daily_report_includes_data_coverage_after_daily_signal_summary():
+    content = render_daily_report(
+        report_date=date(2026, 5, 16),
+        price_signals={},
+        sector_rotation=SectorRotation(
+            strong_sectors=[],
+            weak_sectors=[],
+            risk_on_score=0.0,
+            growth_vs_value="mixed",
+            cyclical_vs_defensive="mixed",
+            notes=[],
+        ),
+        data_coverage=DataCoverage(
+            rows=[
+                DataCoverageRow(
+                    category="Macro",
+                    item="UUP",
+                    status="missing",
+                    rows=0,
+                    latest="N/A",
+                    detail="Needs at least 6 price rows for 5D macro context.",
+                ),
+                DataCoverageRow(
+                    category="News",
+                    item="stored news",
+                    status="missing",
+                    rows=0,
+                    latest="N/A",
+                    detail="No stored news rows available for clustering or event detection.",
+                ),
+            ],
+            impacts=[
+                "Section 4 may be unknown because UUP need at least 6 price rows.",
+                "Sections 5-6 may be empty because no stored news items were found.",
+            ],
+        ),
+    )
+
+    assert content.index("## 0. What Matters Today") < content.index("## Data Coverage")
+    assert content.index("## Data Coverage") < content.index("## 1. Market Overview")
+    assert "| Category | Item | Status | Rows | Latest | Detail |" in content
+    assert (
+        "| Macro | UUP | missing | 0 | N/A | "
+        "Needs at least 6 price rows for 5D macro context. |"
+    ) in content
+    assert "Impact:" in content
+    assert "- Sections 5-6 may be empty because no stored news items were found." in content
 
 
 def test_render_daily_report_includes_macro_context_when_available():
@@ -314,3 +367,44 @@ def test_render_daily_report_includes_detailed_sections_four_to_six():
         "Regulatory events can create legal, financial, or operating constraints. | "
         "Nvidia faces antitrust probe from regulator | Reuters (https://example.com/n) |"
     ) in content
+
+
+def test_render_daily_report_includes_popular_company_price_bounds():
+    content = render_daily_report(
+        report_date=date(2026, 5, 16),
+        price_signals={},
+        sector_rotation=SectorRotation(
+            strong_sectors=[],
+            weak_sectors=[],
+            risk_on_score=0.0,
+            growth_vs_value="unknown",
+            cyclical_vs_defensive="unknown",
+            notes=[],
+        ),
+        company_price_bounds=CompanyPriceBounds(
+            bounds=[
+                CompanyPriceBound(
+                    symbol="AAPL",
+                    latest=210.0,
+                    lower_review_bound=195.25,
+                    upper_review_bound=230.75,
+                    basis="60D range + volatility band",
+                    confidence=0.85,
+                    notes=[
+                        "Recent range 195.25-225.10; volatility band 198.00-230.75."
+                    ],
+                )
+            ],
+            notes=["MSFT skipped: no price history available."],
+        ),
+    )
+
+    assert "## 9. Popular Company Price Bounds" in content
+    assert (
+        "Research support only. These are price-derived review bands, not intrinsic value."
+        in content
+    )
+    assert "| Company | Latest | Lower Review Bound | Upper Review Bound | Basis | Confidence |" in content
+    assert "| AAPL | 210.00 | 195.25 | 230.75 | 60D range + volatility band | 0.85 |" in content
+    assert "- AAPL: Recent range 195.25-225.10; volatility band 198.00-230.75." in content
+    assert "- MSFT skipped: no price history available." in content

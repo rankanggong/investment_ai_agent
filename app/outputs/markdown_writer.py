@@ -2,6 +2,8 @@ from datetime import date
 from pathlib import Path
 
 from app.models.analysis import (
+    CompanyPriceBounds,
+    DataCoverage,
     DailySignalSummary,
     FundamentalEvent,
     MacroContext,
@@ -21,7 +23,9 @@ def render_daily_report(
     news_clusters: list[NewsCluster] | None = None,
     fundamental_events: list[FundamentalEvent] | None = None,
     daily_signal_summary: DailySignalSummary | None = None,
+    data_coverage: DataCoverage | None = None,
     plan_impact: PlanImpact | None = None,
+    company_price_bounds: CompanyPriceBounds | None = None,
 ) -> str:
     lines = [
         f"# Daily Market Brief - {report_date.isoformat()}",
@@ -32,6 +36,14 @@ def render_daily_report(
         "",
     ]
     lines.extend(_render_daily_signal_summary(daily_signal_summary))
+    lines.extend(
+        [
+            "",
+            "## Data Coverage",
+            "",
+        ]
+    )
+    lines.extend(_render_data_coverage(data_coverage))
     lines.extend(
         [
             "",
@@ -121,8 +133,12 @@ def render_daily_report(
             "",
             "No reading list generated in Phase 1.",
             "",
+            "## 9. Popular Company Price Bounds",
+            "",
         ]
     )
+    lines.extend(_render_company_price_bounds(company_price_bounds))
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -162,6 +178,25 @@ def _render_daily_signal_summary(
     ]
     lines.extend(f"- {driver}" for driver in daily_signal_summary.drivers)
     lines.extend(["", f"Reason: {daily_signal_summary.reason}"])
+    return lines
+
+
+def _render_data_coverage(data_coverage: DataCoverage | None) -> list[str]:
+    if data_coverage is None:
+        return ["No data coverage diagnostics generated."]
+
+    lines = [
+        "| Category | Item | Status | Rows | Latest | Detail |",
+        "|---|---|---|---:|---|---|",
+    ]
+    for row in data_coverage.rows:
+        lines.append(
+            f"| {row.category} | {row.item} | {row.status} | "
+            f"{row.rows} | {row.latest} | {row.detail} |"
+        )
+    if data_coverage.impacts:
+        lines.extend(["", "Impact:"])
+        lines.extend(f"- {impact}" for impact in data_coverage.impacts)
     return lines
 
 
@@ -322,3 +357,49 @@ def _render_plan_impact_bucket(
     for item in items:
         lines.append(f"| {item.symbol} | {item.score} | {'; '.join(item.evidence)} |")
     return lines
+
+
+def _render_company_price_bounds(
+    company_price_bounds: CompanyPriceBounds | None,
+) -> list[str]:
+    if company_price_bounds is None:
+        return ["No popular company price bounds generated."]
+
+    lines = [
+        "Research support only. These are price-derived review bands, not intrinsic value.",
+        "",
+    ]
+    if company_price_bounds.bounds:
+        lines.extend(
+            [
+                "| Company | Latest | Lower Review Bound | Upper Review Bound | Basis | Confidence |",
+                "|---|---:|---:|---:|---|---:|",
+            ]
+        )
+        for bound in company_price_bounds.bounds:
+            lines.append(
+                f"| {bound.symbol} | {_format_decimal(bound.latest)} | "
+                f"{_format_decimal(bound.lower_review_bound)} | "
+                f"{_format_decimal(bound.upper_review_bound)} | "
+                f"{bound.basis} | {bound.confidence:.2f} |"
+            )
+    else:
+        lines.append("No company price bounds available.")
+
+    notes = _company_price_bound_notes(company_price_bounds)
+    if notes:
+        lines.extend(["", "Notes:"])
+        lines.extend(f"- {note}" for note in notes)
+    return lines
+
+
+def _company_price_bound_notes(company_price_bounds: CompanyPriceBounds) -> list[str]:
+    notes: list[str] = []
+    for bound in company_price_bounds.bounds:
+        notes.extend(f"{bound.symbol}: {note}" for note in bound.notes)
+    notes.extend(company_price_bounds.notes)
+    return notes
+
+
+def _format_decimal(value: float) -> str:
+    return f"{value:.2f}"

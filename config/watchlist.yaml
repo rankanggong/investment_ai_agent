@@ -37,4 +37,32 @@ assets:
   optional:
     - BTC-USD
     - USD/CNH
-
+  popular_companies:
+    - symbol: AAPL
+      name: Apple
+      type: equity
+      role: popular_company
+    - symbol: MSFT
+      name: Microsoft
+      type: equity
+      role: popular_company
+    - symbol: NVDA
+      name: Nvidia
+      type: equity
+      role: popular_company
+    - symbol: AMZN
+      name: Amazon
+      type: equity
+      role: popular_company
+    - symbol: GOOGL
+      name: Alphabet
+      type: equity
+      role: popular_company
+    - symbol: META
+      name: Meta Platforms
+      type: equity
+      role: popular_company
+    - symbol: TSLA
+      name: Tesla
+      type: equity
+      role: popular_company

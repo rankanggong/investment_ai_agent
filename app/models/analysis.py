@@ -46,6 +46,39 @@ class PlanImpact:
 
 
 @dataclass(frozen=True)
+class CompanyPriceBound:
+    symbol: str
+    latest: float
+    lower_review_bound: float
+    upper_review_bound: float
+    basis: str
+    confidence: float
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CompanyPriceBounds:
+    bounds: list[CompanyPriceBound]
+    notes: list[str]
+
+
+@dataclass(frozen=True)
+class DataCoverageRow:
+    category: str
+    item: str
+    status: str
+    rows: int
+    latest: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class DataCoverage:
+    rows: list[DataCoverageRow]
+    impacts: list[str]
+
+
+@dataclass(frozen=True)
 class MacroEvidenceRow:
     area: str
     signal: str
