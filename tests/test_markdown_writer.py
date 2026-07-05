@@ -408,3 +408,100 @@ def test_render_daily_report_includes_popular_company_price_bounds():
     assert "| AAPL | 210.00 | 195.25 | 230.75 | 60D range + volatility band | 0.85 |" in content
     assert "- AAPL: Recent range 195.25-225.10; volatility band 198.00-230.75." in content
     assert "- MSFT skipped: no price history available." in content
+
+
+def test_render_daily_report_includes_report_signals_watch_next_and_manual_reading():
+    from app.models.analysis import ManualReadItem, ReportSignals, SignalInsight, WatchNextItem
+
+    content = render_daily_report(
+        report_date=date(2026, 5, 16),
+        price_signals={},
+        sector_rotation=SectorRotation(
+            strong_sectors=[],
+            weak_sectors=[],
+            risk_on_score=0.0,
+            growth_vs_value="unknown",
+            cyclical_vs_defensive="unknown",
+            notes=[],
+        ),
+        report_signals=ReportSignals(
+            insights=[
+                SignalInsight(
+                    subject="SOXX",
+                    observed_fact="SOXX moved 2.80% in 1D.",
+                    trigger_type="absolute_move",
+                    evidence_type=["price_confirmed", "volume_confirmed"],
+                    interpretation="Unusual price move detected.",
+                    confidence="medium",
+                    uncertainty="No confirmed fundamental event is linked to the move.",
+                    watch_next="Whether SOXX confirms the move.",
+                    invalidation="SOXX gives back the move.",
+                )
+            ],
+            watch_next=[
+                WatchNextItem(
+                    subject="SOXX",
+                    watch="Whether SOXX follow-through confirms the unusual move.",
+                    confirmation="Move persists and volume remains above recent average.",
+                    invalidation="SOXX gives back the move while volume normalizes.",
+                    source="price",
+                )
+            ],
+            manual_reading=[
+                ManualReadItem(
+                    title="Apple reports quarterly earnings",
+                    url="https://example.com/aapl",
+                    reason="Earnings can reset assumptions.",
+                    source_type="earnings_review",
+                    related_symbol="AAPL",
+                    priority=100,
+                )
+            ],
+        ),
+    )
+
+    assert "Watch next:" in content
+    assert "- SOXX: Whether SOXX follow-through confirms the unusual move." in content
+    assert "## 8. What To Read Manually" in content
+    assert "| Priority | Asset | Type | Reason | Source |" in content
+    assert (
+        "| 100 | AAPL | earnings_review | Earnings can reset assumptions. | "
+        "Apple reports quarterly earnings (https://example.com/aapl) |"
+    ) in content
+
+
+def test_render_daily_report_escapes_manual_reading_table_cells():
+    from app.models.analysis import ManualReadItem, ReportSignals
+
+    content = render_daily_report(
+        report_date=date(2026, 5, 16),
+        price_signals={},
+        sector_rotation=SectorRotation(
+            strong_sectors=[],
+            weak_sectors=[],
+            risk_on_score=0.0,
+            growth_vs_value="unknown",
+            cyclical_vs_defensive="unknown",
+            notes=[],
+        ),
+        report_signals=ReportSignals(
+            insights=[],
+            watch_next=[],
+            manual_reading=[
+                ManualReadItem(
+                    title="Apple | reports\nquarterly earnings",
+                    url="https://example.com/a|b\nc",
+                    reason="Margin | pressure\nrequires review",
+                    source_type="earnings|review",
+                    related_symbol="BRK|B",
+                    priority=75,
+                )
+            ],
+        ),
+    )
+
+    assert (
+        "| 75 | BRK\\|B | earnings\\|review | "
+        "Margin \\| pressure requires review | "
+        "Apple \\| reports quarterly earnings (https://example.com/a\\|b c) |"
+    ) in content

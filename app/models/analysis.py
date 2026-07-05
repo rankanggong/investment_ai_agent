@@ -79,6 +79,46 @@ class DataCoverage:
 
 
 @dataclass(frozen=True)
+class SignalInsight:
+    subject: str
+    observed_fact: str
+    trigger_type: str
+    evidence_type: list[str]
+    interpretation: str
+    confidence: str
+    data_coverage: str = "available"
+    uncertainty: str = ""
+    watch_next: str = ""
+    invalidation: str = ""
+
+
+@dataclass(frozen=True)
+class WatchNextItem:
+    subject: str
+    watch: str
+    confirmation: str
+    invalidation: str
+    source: str
+
+
+@dataclass(frozen=True)
+class ManualReadItem:
+    title: str
+    url: str
+    reason: str
+    source_type: str
+    related_symbol: str
+    priority: int
+
+
+@dataclass(frozen=True)
+class ReportSignals:
+    insights: list[SignalInsight]
+    watch_next: list[WatchNextItem]
+    manual_reading: list[ManualReadItem]
+
+
+@dataclass(frozen=True)
 class MacroEvidenceRow:
     area: str
     signal: str

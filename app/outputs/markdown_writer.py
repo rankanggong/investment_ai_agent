@@ -11,6 +11,7 @@ from app.models.analysis import (
     PlanImpact,
     PlanImpactItem,
     PriceSignal,
+    ReportSignals,
     SectorRotation,
 )
 
@@ -26,6 +27,7 @@ def render_daily_report(
     data_coverage: DataCoverage | None = None,
     plan_impact: PlanImpact | None = None,
     company_price_bounds: CompanyPriceBounds | None = None,
+    report_signals: ReportSignals | None = None,
 ) -> str:
     lines = [
         f"# Daily Market Brief - {report_date.isoformat()}",
@@ -36,6 +38,7 @@ def render_daily_report(
         "",
     ]
     lines.extend(_render_daily_signal_summary(daily_signal_summary))
+    lines.extend(_render_watch_next(report_signals))
     lines.extend(
         [
             "",
@@ -131,7 +134,11 @@ def render_daily_report(
             "",
             "## 8. What To Read Manually",
             "",
-            "No reading list generated in Phase 1.",
+        ]
+    )
+    lines.extend(_render_manual_reading(report_signals))
+    lines.extend(
+        [
             "",
             "## 9. Popular Company Price Bounds",
             "",
@@ -178,6 +185,16 @@ def _render_daily_signal_summary(
     ]
     lines.extend(f"- {driver}" for driver in daily_signal_summary.drivers)
     lines.extend(["", f"Reason: {daily_signal_summary.reason}"])
+    return lines
+
+
+def _render_watch_next(report_signals: ReportSignals | None) -> list[str]:
+    if report_signals is None or not report_signals.watch_next:
+        return []
+
+    lines = ["", "Watch next:"]
+    for item in report_signals.watch_next[:5]:
+        lines.append(f"- {item.subject}: {item.watch}")
     return lines
 
 
@@ -357,6 +374,28 @@ def _render_plan_impact_bucket(
     for item in items:
         lines.append(f"| {item.symbol} | {item.score} | {'; '.join(item.evidence)} |")
     return lines
+
+
+def _render_manual_reading(report_signals: ReportSignals | None) -> list[str]:
+    if report_signals is None or not report_signals.manual_reading:
+        return ["No manual reading items generated."]
+
+    lines = [
+        "| Priority | Asset | Type | Reason | Source |",
+        "|---:|---|---|---|---|",
+    ]
+    for item in report_signals.manual_reading[:10]:
+        lines.append(
+            f"| {item.priority} | {_safe_table_cell(item.related_symbol)} | "
+            f"{_safe_table_cell(item.source_type)} | "
+            f"{_safe_table_cell(item.reason)} | "
+            f"{_safe_table_cell(item.title)} ({_safe_table_cell(item.url)}) |"
+        )
+    return lines
+
+
+def _safe_table_cell(value: str) -> str:
+    return value.replace("\r", " ").replace("\n", " ").replace("|", "\\|")
 
 
 def _render_company_price_bounds(
