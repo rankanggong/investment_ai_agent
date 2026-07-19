@@ -36,48 +36,18 @@ def test_cli_exposes_steward_commands():
     init_args = parser.parse_args(["steward", "init-db"])
     assert init_args.command == "steward"
     assert init_args.steward_command == "init-db"
-    import_args = parser.parse_args(["steward", "import"])
+    import_args = parser.parse_args(
+        ["steward", "import", "--csv", "steward-state.csv"]
+    )
     assert import_args.steward_command == "import"
+    assert import_args.csv == Path("steward-state.csv")
     report_args = parser.parse_args(["steward", "report"])
     assert report_args.steward_command == "report"
-    account_args = parser.parse_args(
-        [
-            "steward",
-            "account",
-            "set",
-            "--institution",
-            "cmb",
-            "--account",
-            "bank",
-            "--currency",
-            "CNY",
-            "--ownership",
-            "owned",
-            "--role",
-            "bank",
-        ]
-    )
-    assert account_args.steward_command == "account"
-    assert account_args.account_command == "set"
-    transfer_args = parser.parse_args(
-        [
-            "steward",
-            "transfer",
-            "confirm",
-            "--outgoing-id",
-            "10",
-            "--incoming-id",
-            "20",
-        ]
-    )
-    assert transfer_args.steward_command == "transfer"
-    assert transfer_args.transfer_command == "confirm"
-    holding_args = parser.parse_args(
-        ["steward", "holding", "import", "--csv", "holdings.csv"]
-    )
-    assert holding_args.steward_command == "holding"
-    assert holding_args.holding_command == "import"
-    assert holding_args.csv == Path("holdings.csv")
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["steward", "import", "--inbox", "statements"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["steward", "holding", "import", "--csv", "holdings.csv"])
 
 
 def test_steward_cli_commands_delegate_to_job_functions(tmp_path, monkeypatch, capsys):
@@ -86,14 +56,14 @@ def test_steward_cli_commands_delegate_to_job_functions(tmp_path, monkeypatch, c
     def init_db(db_path):
         calls.append(("init", db_path))
 
-    def import_inbox(db_path, inbox_path):
-        calls.append(("import", db_path, inbox_path))
+    def import_state(db_path, csv_path):
+        calls.append(("import", db_path, csv_path))
 
         class Summary:
-            documents_seen = 1
-            parsed_documents = 1
-            imported_transactions = 2
-            warnings = ["sample warning"]
+            rows_seen = 8
+            cash_positions = 3
+            holdings = 4
+            fx_conversions = 1
 
         return Summary()
 
@@ -102,11 +72,11 @@ def test_steward_cli_commands_delegate_to_job_functions(tmp_path, monkeypatch, c
         return report_dir / "portfolio-steward-report-2026-07-15.md"
 
     monkeypatch.setattr(app.main, "initialize_steward_database", init_db)
-    monkeypatch.setattr(app.main, "import_steward_inbox", import_inbox)
-    monkeypatch.setattr(app.main, "generate_steward_report", report)
+    monkeypatch.setattr(app.main, "import_steward_state_csv", import_state)
+    monkeypatch.setattr(app.main, "generate_steward_state_report", report)
 
     db_path = tmp_path / "steward.db"
-    inbox = tmp_path / "inbox"
+    csv_path = tmp_path / "state.csv"
     report_dir = tmp_path / "reports"
 
     assert app.main.main(["steward", "init-db", "--db", str(db_path)]) == 0
@@ -117,8 +87,8 @@ def test_steward_cli_commands_delegate_to_job_functions(tmp_path, monkeypatch, c
                 "import",
                 "--db",
                 str(db_path),
-                "--inbox",
-                str(inbox),
+                "--csv",
+                str(csv_path),
             ]
         )
         == 0
@@ -139,123 +109,12 @@ def test_steward_cli_commands_delegate_to_job_functions(tmp_path, monkeypatch, c
 
     assert calls == [
         ("init", db_path),
-        ("import", db_path, inbox),
+        ("import", db_path, csv_path),
         ("report", db_path, report_dir),
     ]
     output = capsys.readouterr().out
-    assert "Imported 2 steward transactions from 1 files" in output
-    assert "sample warning" in output
+    assert "Imported 8 state rows: 3 cash, 4 holdings, 1 FX conversions" in output
     assert "Wrote steward report" in output
-
-
-def test_steward_cli_persists_account_and_transfer_review(tmp_path, monkeypatch, capsys):
-    calls = []
-
-    class FakeRepository:
-        def __init__(self, db_path):
-            calls.append(("repo", db_path))
-
-        def upsert_account_profile(self, account):
-            calls.append(("account", account))
-
-        def upsert_transfer_decision(self, decision):
-            calls.append(("transfer", decision))
-
-    monkeypatch.setattr(app.main, "StewardRepository", FakeRepository)
-    monkeypatch.setattr(
-        app.main,
-        "initialize_steward_database",
-        lambda db_path: calls.append(("init", db_path)),
-    )
-    db_path = tmp_path / "steward.db"
-
-    assert (
-        app.main.main(
-            [
-                "steward",
-                "account",
-                "set",
-                "--db",
-                str(db_path),
-                "--institution",
-                "cmb",
-                "--account",
-                "bank",
-                "--currency",
-                "cny",
-                "--ownership",
-                "owned",
-                "--role",
-                "bank",
-            ]
-        )
-        == 0
-    )
-    assert (
-        app.main.main(
-            [
-                "steward",
-                "transfer",
-                "reject",
-                "--db",
-                str(db_path),
-                "--outgoing-id",
-                "10",
-                "--incoming-id",
-                "20",
-            ]
-        )
-        == 0
-    )
-
-    account = next(call[1] for call in calls if call[0] == "account")
-    decision = next(call[1] for call in calls if call[0] == "transfer")
-    assert account.currency == "CNY"
-    assert account.ownership == "owned"
-    assert account.role == "bank"
-    assert decision.outgoing_transaction_id == 10
-    assert decision.incoming_transaction_id == 20
-    assert decision.status == "rejected"
-    output = capsys.readouterr().out
-    assert "Saved steward account profile" in output
-    assert "Rejected transfer candidate 10 -> 20" in output
-
-
-def test_steward_cli_imports_manual_holdings(tmp_path, monkeypatch, capsys):
-    calls = []
-
-    class Summary:
-        rows_seen = 3
-        imported_holdings = 2
-        linked_fx_holdings = 1
-        warnings = ["row 4: invalid quantity"]
-
-    monkeypatch.setattr(
-        app.main,
-        "import_holdings_csv",
-        lambda db_path, csv_path: calls.append((db_path, csv_path)) or Summary(),
-    )
-    db_path = tmp_path / "steward.db"
-    csv_path = tmp_path / "holdings.csv"
-
-    result = app.main.main(
-        [
-            "steward",
-            "holding",
-            "import",
-            "--db",
-            str(db_path),
-            "--csv",
-            str(csv_path),
-        ]
-    )
-
-    assert result == 0
-    assert calls == [(db_path, csv_path)]
-    output = capsys.readouterr().out
-    assert "Imported 2 of 3 holding rows" in output
-    assert "automatically linked 1 USD holdings" in output
-    assert "row 4: invalid quantity" in output
 
 
 def test_yfinance_collection_uses_watchlist_and_reports_failures(

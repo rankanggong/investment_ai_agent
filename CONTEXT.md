@@ -1,35 +1,30 @@
 # Investment Steward
 
-The investment steward describes personal financial state across imported account
-records while preserving the distinction between observed records and interpreted
-economic activity.
+The investment steward describes the household's supplied cash, investment, and
+foreign-exchange state without reconstructing detailed account activity.
 
 ## Language
 
-**Statement Transaction**:
-An immutable transaction record extracted from one source document and attributed to one account.
-_Avoid_: Economic event, cashflow
+**Asset State**:
+The complete set of cash positions, holding snapshots, and FX conversions supplied for stewardship review.
+_Avoid_: Ledger, transaction history
 
-**Economic Event**:
-A financial occurrence interpreted from one or more statement transactions, such as income, spending, an internal transfer, a trade, or an FX conversion.
-_Avoid_: Transaction
+**Cash Position**:
+The balance of one currency in one owned account as of a stated date.
+_Avoid_: Cash transaction, cashflow
 
-**Internal Transfer**:
-An economic event that moves value between accounts owned by the same household without changing household wealth.
-_Avoid_: Income, expense
+**Holding Snapshot**:
+The quantity and supplied unit cost of one asset in one account as of a stated date.
+_Avoid_: Trade, position transaction
 
-**Transfer Candidate**:
-A possible internal transfer whose statement transactions satisfy matching rules but have not been confirmed.
-_Avoid_: Transfer
+**FX Conversion**:
+A supplied record of one currency amount exchanged for another, including its date and any fee.
+_Avoid_: FX suggestion, currency exposure
 
-**External Cashflow**:
-Money entering or leaving the household, excluding confirmed internal transfers.
-_Avoid_: Account movement, gross cashflow
+**Holding Cost**:
+The quantity of a holding multiplied by its supplied unit cost, denominated in the holding currency.
+_Avoid_: Market value, purchase amount
 
-**Statement Cashflow**:
-The gross credits and debits appearing in imported statement transactions before reconciliation.
-_Avoid_: External cashflow
-
-**Owned Account**:
-An account included within the household whose movements may be reconciled with other owned accounts.
-_Avoid_: Known account
+**State Snapshot Date**:
+The date on which a cash position or holding snapshot describes the owned state.
+_Avoid_: Transaction date, import date

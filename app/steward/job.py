@@ -7,6 +7,7 @@ from app.steward.analyzer import analyze_cash_state
 from app.steward.markdown_writer import render_steward_report
 from app.steward.parsers.registry import parse_statement_file
 from app.steward.reconciliation import reconcile_transfers
+from app.steward.state import read_steward_state_csv
 from app.steward.storage import StewardRepository, initialize_steward_database
 
 
@@ -16,6 +17,14 @@ class StewardImportSummary:
     parsed_documents: int
     imported_transactions: int
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class StewardStateImportSummary:
+    rows_seen: int
+    cash_positions: int
+    holdings: int
+    fx_conversions: int
 
 
 def import_steward_inbox(db_path: Path, inbox_path: Path) -> StewardImportSummary:
@@ -63,6 +72,47 @@ def import_steward_inbox(db_path: Path, inbox_path: Path) -> StewardImportSummar
         imported_transactions=imported_transactions,
         warnings=warnings,
     )
+
+
+def import_steward_state_csv(
+    db_path: Path,
+    csv_path: Path,
+) -> StewardStateImportSummary:
+    initialize_steward_database(db_path)
+    state = read_steward_state_csv(csv_path)
+    StewardRepository(db_path).replace_state(state)
+    return StewardStateImportSummary(
+        rows_seen=(
+            len(state.cash_positions)
+            + len(state.holdings)
+            + len(state.fx_conversions)
+        ),
+        cash_positions=len(state.cash_positions),
+        holdings=len(state.holdings),
+        fx_conversions=len(state.fx_conversions),
+    )
+
+
+def generate_steward_state_report(
+    db_path: Path,
+    report_dir: Path,
+    report_date: date | None = None,
+) -> Path:
+    from app.steward.markdown_writer import render_steward_state_report
+
+    initialize_steward_database(db_path)
+    repo = StewardRepository(db_path)
+    effective_date = report_date or date.today()
+    content = render_steward_state_report(effective_date, repo.load_state())
+    report_dir.mkdir(parents=True, exist_ok=True)
+    path = report_dir / f"portfolio-steward-report-{effective_date.isoformat()}.md"
+    path.write_text(content, encoding="utf-8")
+    repo.insert_report(
+        report_date=effective_date,
+        title=f"Portfolio Steward Report - {effective_date.isoformat()}",
+        content=content,
+    )
+    return path
 
 
 def generate_steward_report(

@@ -7,8 +7,8 @@ The active workflow is intentionally data-first:
 
 - Market analysis uses stored price history for moves, sector rotation, macro
   context, plan impact, and company price review bounds.
-- Personal financial analysis uses locally imported account statements for cash,
-  transfer, and FX review.
+- Personal financial analysis uses one supplied state CSV for cash positions,
+  holding snapshots, and FX conversions.
 - RSS/news collection and news-derived report sections are currently disabled.
   The existing news schema and implementation remain in the repository so the
   feature can be restored without deleting historical data.
@@ -48,63 +48,34 @@ The generated report is research support only. It does not provide trading advic
 
 ## Portfolio Steward
 
-The independent steward imports supported bank/payment statements from a local
-folder and writes a cash, transfer, and FX review report:
+The steward reads one authoritative CSV containing current cash positions,
+holding snapshots, and FX conversions. It does not require detailed bank
+transactions or PDF statement parsing:
 
 ```bash
 python -m app.main steward init-db
-python -m app.main steward import --inbox data/steward/inbox
+python -m app.main steward import \
+  --csv data/steward/templates/steward_state_template.csv
 python -m app.main steward report
 ```
 
-Register both sides of a possible internal transfer as owned accounts, using the
-institution and account labels shown in the report:
+Each row uses `record_type` to select its contract:
 
-```bash
-python -m app.main steward account set \
-  --institution cmb --account bank-label --currency CNY \
-  --ownership owned --role bank
-python -m app.main steward account set \
-  --institution broker --account cash-label --currency CNY \
-  --ownership owned --role brokerage
-```
-
-Generate the report again to see transfer candidates. Confirm or reject a pair
-using its statement transaction IDs:
-
-```bash
-python -m app.main steward transfer confirm --outgoing-id 10 --incoming-id 20
-python -m app.main steward transfer reject --outgoing-id 30 --incoming-id 40
-```
-
-Only confirmed transfers are excluded from external household cashflow.
-Unconfirmed candidates remain included and are shown for manual review.
-
-### Manual Holding Import
-
-Holdings that are not available from a statement parser can be supplied as CSV:
-
-```bash
-python -m app.main steward holding import --csv path/to/holdings.csv
-```
+- `cash`: account balance and snapshot date.
+- `holding`: asset quantity, unit cost, currency, and snapshot date.
+- `fx`: sold/bought currencies and amounts, conversion date, and fee.
 
 The CSV must contain these columns:
 
 ```text
-institution,account_label,symbol,name,quantity,currency,unit_cost,acquired_on
+record_type,as_of_date,institution,account_label,currency,cash_balance,
+symbol,asset_name,quantity,unit_cost,acquired_on,fx_date,sold_currency,
+sold_amount,bought_currency,bought_amount,fee_currency,fee_amount,notes
 ```
 
-`acquired_on` uses `YYYY-MM-DD`. Importing the same institution, account,
-symbol, and acquisition date again updates that holding, so corrected files can
-be re-imported safely. Currency names such as `美元` and `人民币` are normalized
-to `USD` and `CNY`.
-
-For each USD holding, the importer looks through already imported cash
-transactions for a positive USD entry marked as an FX conversion and dated no
-later than the holding acquisition. It prefers the same institution/account,
-then the same institution, then the nearest date. The linked statement
-transaction ID is stored with the holding for audit. If no eligible transaction
-exists, the holding is still imported and the command prints a warning.
+Dates use `YYYY-MM-DD`; numbers use a decimal point without thousands
+separators. `RMB` and `人民币` are normalized to `CNY`. The import is atomic and
+replaces the prior steward state only after every populated row validates.
 
 ## Amazon Bedrock
 

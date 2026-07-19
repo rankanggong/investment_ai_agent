@@ -47,3 +47,56 @@ class Holding:
 @dataclass(frozen=True)
 class StoredHolding(Holding):
     id: int = 0
+
+
+@dataclass(frozen=True)
+class CashPosition:
+    institution: str
+    account_label: str
+    currency: str
+    balance: Decimal
+    as_of_date: date
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class HoldingPosition:
+    institution: str
+    account_label: str
+    symbol: str
+    name: str
+    quantity: Decimal
+    currency: str
+    unit_cost: Decimal
+    as_of_date: date
+    acquired_on: date | None = None
+    notes: str = ""
+
+    @property
+    def total_cost(self) -> Decimal:
+        return self.quantity * self.unit_cost
+
+
+@dataclass(frozen=True)
+class FxConversion:
+    institution: str
+    account_label: str
+    fx_date: date
+    sold_currency: str
+    sold_amount: Decimal
+    bought_currency: str
+    bought_amount: Decimal
+    fee_currency: str | None = None
+    fee_amount: Decimal = Decimal("0")
+    notes: str = ""
+
+    @property
+    def effective_rate(self) -> Decimal:
+        return self.sold_amount / self.bought_amount
+
+
+@dataclass(frozen=True)
+class StewardState:
+    cash_positions: list[CashPosition]
+    holdings: list[HoldingPosition]
+    fx_conversions: list[FxConversion]

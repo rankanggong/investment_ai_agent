@@ -1,1 +1,1 @@
-"""Independent portfolio/cash steward module."""
+"""Cash, holdings, and foreign-exchange state stewardship."""

@@ -6,10 +6,11 @@ from app.collectors.price_collector import load_price_csv
 from app.collectors.yfinance_price_collector import collect_yfinance_prices
 from app.config import load_watchlist
 from app.jobs.daily_market_job import generate_daily_report
-from app.steward.job import generate_steward_report, import_steward_inbox
-from app.steward.holdings import import_holdings_csv
-from app.steward.reconciliation import AccountProfile, TransferDecision
-from app.steward.storage import StewardRepository, initialize_steward_database
+from app.steward.job import (
+    generate_steward_state_report,
+    import_steward_state_csv,
+)
+from app.steward.storage import initialize_steward_database
 from app.storage.db import initialize_database
 from app.storage.repositories.price_repo import PriceRepository
 
@@ -19,9 +20,6 @@ DEFAULT_WATCHLIST_PATH = Path("config/watchlist.yaml")
 DEFAULT_REPORT_DIR = Path(os.environ.get("FINANCE_AGENT_REPORT_DIR", "data/reports"))
 DEFAULT_STEWARD_DB_PATH = Path(
     os.environ.get("FINANCE_AGENT_STEWARD_DB_PATH", "data/steward/steward.db")
-)
-DEFAULT_STEWARD_INBOX_PATH = Path(
-    os.environ.get("FINANCE_AGENT_STEWARD_INBOX", "data/steward/inbox")
 )
 DEFAULT_STEWARD_REPORT_DIR = Path(
     os.environ.get("FINANCE_AGENT_STEWARD_REPORT_DIR", "data/steward/reports")
@@ -53,7 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     daily.add_argument("--watchlist", type=Path, default=DEFAULT_WATCHLIST_PATH)
     daily.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
 
-    steward = subparsers.add_parser("steward", help="Import and report personal cash/FX state")
+    steward = subparsers.add_parser(
+        "steward",
+        help="Import and report cash, holdings, and FX state",
+    )
     steward_subparsers = steward.add_subparsers(dest="steward_command", required=True)
     steward_init_db = steward_subparsers.add_parser(
         "init-db",
@@ -63,14 +64,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     steward_import = steward_subparsers.add_parser(
         "import",
-        help="Import bank/payment statements from a local folder",
+        help="Replace steward state from a unified CSV file",
     )
     steward_import.add_argument("--db", type=Path, default=DEFAULT_STEWARD_DB_PATH)
-    steward_import.add_argument("--inbox", type=Path, default=DEFAULT_STEWARD_INBOX_PATH)
+    steward_import.add_argument("--csv", type=Path, required=True)
 
     steward_report = steward_subparsers.add_parser(
         "report",
-        help="Generate a steward cash/FX review report",
+        help="Generate a cash, holdings, and FX state report",
     )
     steward_report.add_argument("--db", type=Path, default=DEFAULT_STEWARD_DB_PATH)
     steward_report.add_argument(
@@ -78,63 +79,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_STEWARD_REPORT_DIR,
     )
-
-    steward_account = steward_subparsers.add_parser(
-        "account",
-        help="Register account ownership and role",
-    )
-    account_subparsers = steward_account.add_subparsers(
-        dest="account_command",
-        required=True,
-    )
-    account_set = account_subparsers.add_parser("set", help="Set an account profile")
-    account_set.add_argument("--db", type=Path, default=DEFAULT_STEWARD_DB_PATH)
-    account_set.add_argument("--institution", required=True)
-    account_set.add_argument("--account", dest="account_label", required=True)
-    account_set.add_argument("--currency", required=True)
-    account_set.add_argument(
-        "--ownership",
-        choices=("owned", "external", "unknown"),
-        required=True,
-    )
-    account_set.add_argument(
-        "--role",
-        choices=("bank", "brokerage", "payment", "wallet", "other"),
-        required=True,
-    )
-
-    steward_transfer = steward_subparsers.add_parser(
-        "transfer",
-        help="Confirm or reject a transfer candidate",
-    )
-    transfer_subparsers = steward_transfer.add_subparsers(
-        dest="transfer_command",
-        required=True,
-    )
-    for command in ("confirm", "reject"):
-        transfer_command = transfer_subparsers.add_parser(command)
-        transfer_command.add_argument(
-            "--db",
-            type=Path,
-            default=DEFAULT_STEWARD_DB_PATH,
-        )
-        transfer_command.add_argument("--outgoing-id", type=int, required=True)
-        transfer_command.add_argument("--incoming-id", type=int, required=True)
-
-    steward_holding = steward_subparsers.add_parser(
-        "holding",
-        help="Manage manually supplied investment holdings",
-    )
-    holding_subparsers = steward_holding.add_subparsers(
-        dest="holding_command",
-        required=True,
-    )
-    holding_import = holding_subparsers.add_parser(
-        "import",
-        help="Import holdings from a CSV file and link USD rows to FX data",
-    )
-    holding_import.add_argument("--db", type=Path, default=DEFAULT_STEWARD_DB_PATH)
-    holding_import.add_argument("--csv", type=Path, required=True)
 
     return parser
 
@@ -195,77 +139,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "steward" and args.steward_command == "import":
-        summary = import_steward_inbox(args.db, args.inbox)
-        print(
-            f"Imported {summary.imported_transactions} steward transactions "
-            f"from {summary.documents_seen} files into {args.db}"
-        )
-        if summary.warnings:
-            print("Warnings:")
-            for warning in summary.warnings:
-                print(f"  {warning}")
-        return 0
-
-    if args.command == "steward" and args.steward_command == "report":
-        path = generate_steward_report(args.db, args.report_dir)
-        print(f"Wrote steward report to {path}")
-        return 0
-
-    if (
-        args.command == "steward"
-        and args.steward_command == "account"
-        and args.account_command == "set"
-    ):
-        initialize_steward_database(args.db)
-        profile = AccountProfile(
-            institution=args.institution,
-            account_label=args.account_label,
-            currency=args.currency.upper(),
-            ownership=args.ownership,
-            role=args.role,
-        )
-        StewardRepository(args.db).upsert_account_profile(profile)
-        print(
-            "Saved steward account profile for "
-            f"{profile.institution} / {profile.account_label} / {profile.currency}"
-        )
-        return 0
-
-    if args.command == "steward" and args.steward_command == "transfer":
-        if args.outgoing_id == args.incoming_id:
-            parser.error("Transfer legs must use different statement transaction IDs")
-        initialize_steward_database(args.db)
-        status = "confirmed" if args.transfer_command == "confirm" else "rejected"
-        decision = TransferDecision(
-            outgoing_transaction_id=args.outgoing_id,
-            incoming_transaction_id=args.incoming_id,
-            status=status,
-        )
-        StewardRepository(args.db).upsert_transfer_decision(decision)
-        verb = "Confirmed" if status == "confirmed" else "Rejected"
-        print(
-            f"{verb} transfer candidate "
-            f"{decision.outgoing_transaction_id} -> {decision.incoming_transaction_id}"
-        )
-        return 0
-
-    if (
-        args.command == "steward"
-        and args.steward_command == "holding"
-        and args.holding_command == "import"
-    ):
         try:
-            summary = import_holdings_csv(args.db, args.csv)
+            summary = import_steward_state_csv(args.db, args.csv)
         except (OSError, ValueError) as exc:
             parser.error(str(exc))
         print(
-            f"Imported {summary.imported_holdings} of {summary.rows_seen} holding rows; "
-            f"automatically linked {summary.linked_fx_holdings} USD holdings to FX data"
+            f"Imported {summary.rows_seen} state rows: "
+            f"{summary.cash_positions} cash, {summary.holdings} holdings, "
+            f"{summary.fx_conversions} FX conversions into {args.db}"
         )
-        if summary.warnings:
-            print("Warnings:")
-            for warning in summary.warnings:
-                print(f"  {warning}")
+        return 0
+
+    if args.command == "steward" and args.steward_command == "report":
+        path = generate_steward_state_report(args.db, args.report_dir)
+        print(f"Wrote steward report to {path}")
         return 0
 
     parser.error("Unsupported command")

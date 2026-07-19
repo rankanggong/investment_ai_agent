@@ -2,7 +2,124 @@ from datetime import date
 from decimal import Decimal
 
 from app.steward.analyzer import CashState
-from app.steward.models import StoredHolding
+from app.steward.models import StewardState, StoredHolding
+
+
+def render_steward_state_report(
+    report_date: date,
+    state: StewardState,
+) -> str:
+    lines = [
+        f"# Portfolio Steward Report - {report_date.isoformat()}",
+        "",
+        "Research support only. Not investment, trading, tax, or FX execution advice.",
+        "",
+        "## 0. State Summary",
+        "",
+        f"- Cash positions: {len(state.cash_positions)}",
+        f"- Holdings: {len(state.holdings)}",
+        f"- FX conversions: {len(state.fx_conversions)}",
+        "",
+        "## 1. Cash Positions",
+        "",
+    ]
+    lines.extend(_render_state_cash(state))
+    lines.extend(["", "## 2. Holdings", ""])
+    lines.extend(_render_state_holdings(state))
+    lines.extend(["", "## 3. FX Conversions", ""])
+    lines.extend(_render_state_fx(state))
+    lines.extend(["", "## 4. Holding Cost By Currency", ""])
+    lines.extend(_render_holding_costs(state))
+    lines.extend(
+        [
+            "",
+            "## 5. Data Notes",
+            "",
+            "- This report describes supplied state snapshots; it does not reconstruct transaction history.",
+            "- FX conversions are recorded facts and are not automatically allocated to individual holdings.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _render_state_cash(state: StewardState) -> list[str]:
+    if not state.cash_positions:
+        return ["No cash positions supplied."]
+    lines = [
+        "| Institution | Account | Currency | Balance | As Of |",
+        "|---|---|---|---:|---|",
+    ]
+    for item in state.cash_positions:
+        lines.append(
+            f"| {_cell(item.institution)} | {_cell(item.account_label)} | "
+            f"{item.currency} | {_format_decimal(item.balance)} | "
+            f"{item.as_of_date.isoformat()} |"
+        )
+    return lines
+
+
+def _render_state_holdings(state: StewardState) -> list[str]:
+    if not state.holdings:
+        return ["No holdings supplied."]
+    lines = [
+        "| Institution | Account | Symbol | Name | Currency | Quantity | Unit Cost | Total Cost | As Of | Acquired On |",
+        "|---|---|---|---|---|---:|---:|---:|---|---|",
+    ]
+    for item in state.holdings:
+        acquired_on = item.acquired_on.isoformat() if item.acquired_on else "—"
+        lines.append(
+            f"| {_cell(item.institution)} | {_cell(item.account_label)} | "
+            f"{_cell(item.symbol)} | {_cell(item.name)} | {item.currency} | "
+            f"{_format_compact(item.quantity)} | {_format_compact(item.unit_cost)} | "
+            f"{_format_decimal(item.total_cost)} | {item.as_of_date.isoformat()} | "
+            f"{acquired_on} |"
+        )
+    return lines
+
+
+def _render_state_fx(state: StewardState) -> list[str]:
+    if not state.fx_conversions:
+        return ["No FX conversions supplied."]
+    lines = [
+        "| Date | Account | Sold | Bought | Effective Rate | Fee |",
+        "|---|---|---:|---:|---:|---:|",
+    ]
+    for item in state.fx_conversions:
+        fee = f"{item.fee_currency or '—'} {_format_decimal(item.fee_amount)}"
+        lines.append(
+            f"| {item.fx_date.isoformat()} | {_cell(item.institution)} / "
+            f"{_cell(item.account_label)} | {item.sold_currency} "
+            f"{_format_decimal(item.sold_amount)} | {item.bought_currency} "
+            f"{_format_decimal(item.bought_amount)} | "
+            f"{_format_rate(item.effective_rate)} {item.sold_currency}/"
+            f"{item.bought_currency} | {fee} |"
+        )
+    return lines
+
+
+def _render_holding_costs(state: StewardState) -> list[str]:
+    costs: dict[str, Decimal] = {}
+    for item in state.holdings:
+        costs[item.currency] = costs.get(item.currency, Decimal("0")) + item.total_cost
+    if not costs:
+        return ["No holding costs supplied."]
+    lines = ["| Currency | Total Cost |", "|---|---:|"]
+    for currency, cost in sorted(costs.items()):
+        lines.append(f"| {currency} | {_format_decimal(cost)} |")
+    return lines
+
+
+def _cell(value: str) -> str:
+    return value.replace("|", "\\|")
+
+
+def _format_compact(value: Decimal) -> str:
+    return format(value, "f")
+
+
+def _format_rate(value: Decimal) -> str:
+    return f"{value:.4f}"
 
 
 def render_steward_report(

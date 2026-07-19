@@ -5,8 +5,12 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.steward.models import (
+    CashPosition,
     CashTransaction,
+    FxConversion,
     Holding,
+    HoldingPosition,
+    StewardState,
     StoredCashTransaction,
     StoredHolding,
 )
@@ -85,6 +89,44 @@ CREATE TABLE IF NOT EXISTS steward_holdings (
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(institution, account_label, symbol, acquired_on),
   FOREIGN KEY(fx_transaction_id) REFERENCES steward_cash_transactions(id)
+);
+
+CREATE TABLE IF NOT EXISTS steward_cash_positions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  institution TEXT NOT NULL,
+  account_label TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  balance TEXT NOT NULL,
+  as_of_date TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS steward_position_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  institution TEXT NOT NULL,
+  account_label TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  name TEXT NOT NULL,
+  quantity TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  unit_cost TEXT NOT NULL,
+  as_of_date TEXT NOT NULL,
+  acquired_on TEXT,
+  notes TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS steward_fx_conversions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  institution TEXT NOT NULL,
+  account_label TEXT NOT NULL,
+  fx_date TEXT NOT NULL,
+  sold_currency TEXT NOT NULL,
+  sold_amount TEXT NOT NULL,
+  bought_currency TEXT NOT NULL,
+  bought_amount TEXT NOT NULL,
+  fee_currency TEXT,
+  fee_amount TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -306,6 +348,110 @@ class StewardRepository:
             ).fetchall()
         return [_row_to_holding(row) for row in rows]
 
+    def replace_state(self, state: StewardState) -> None:
+        """Atomically replace the authoritative steward state snapshot."""
+        with _connect(self.db_path) as conn:
+            conn.execute("DELETE FROM steward_cash_positions")
+            conn.execute("DELETE FROM steward_position_snapshots")
+            conn.execute("DELETE FROM steward_fx_conversions")
+            conn.executemany(
+                """
+                INSERT INTO steward_cash_positions
+                  (institution, account_label, currency, balance, as_of_date, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        item.institution,
+                        item.account_label,
+                        item.currency,
+                        str(item.balance),
+                        item.as_of_date.isoformat(),
+                        item.notes,
+                    )
+                    for item in state.cash_positions
+                ],
+            )
+            conn.executemany(
+                """
+                INSERT INTO steward_position_snapshots
+                  (
+                    institution, account_label, symbol, name, quantity,
+                    currency, unit_cost, as_of_date, acquired_on, notes
+                  )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        item.institution,
+                        item.account_label,
+                        item.symbol,
+                        item.name,
+                        str(item.quantity),
+                        item.currency,
+                        str(item.unit_cost),
+                        item.as_of_date.isoformat(),
+                        item.acquired_on.isoformat()
+                        if item.acquired_on is not None
+                        else None,
+                        item.notes,
+                    )
+                    for item in state.holdings
+                ],
+            )
+            conn.executemany(
+                """
+                INSERT INTO steward_fx_conversions
+                  (
+                    institution, account_label, fx_date, sold_currency,
+                    sold_amount, bought_currency, bought_amount, fee_currency,
+                    fee_amount, notes
+                  )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        item.institution,
+                        item.account_label,
+                        item.fx_date.isoformat(),
+                        item.sold_currency,
+                        str(item.sold_amount),
+                        item.bought_currency,
+                        str(item.bought_amount),
+                        item.fee_currency,
+                        str(item.fee_amount),
+                        item.notes,
+                    )
+                    for item in state.fx_conversions
+                ],
+            )
+
+    def load_state(self) -> StewardState:
+        with _connect(self.db_path) as conn:
+            cash_rows = conn.execute(
+                """
+                SELECT * FROM steward_cash_positions
+                ORDER BY institution, account_label, currency, as_of_date, id
+                """
+            ).fetchall()
+            holding_rows = conn.execute(
+                """
+                SELECT * FROM steward_position_snapshots
+                ORDER BY institution, account_label, symbol, currency, id
+                """
+            ).fetchall()
+            fx_rows = conn.execute(
+                """
+                SELECT * FROM steward_fx_conversions
+                ORDER BY fx_date, institution, account_label, id
+                """
+            ).fetchall()
+        return StewardState(
+            cash_positions=[_row_to_cash_position(row) for row in cash_rows],
+            holdings=[_row_to_holding_position(row) for row in holding_rows],
+            fx_conversions=[_row_to_fx_conversion(row) for row in fx_rows],
+        )
+
     def insert_report(self, report_date: date, title: str, content: str) -> None:
         with _connect(self.db_path) as conn:
             conn.execute(
@@ -354,4 +500,47 @@ def _row_to_holding(row: sqlite3.Row) -> StoredHolding:
         unit_cost=Decimal(row["unit_cost"]),
         acquired_on=date.fromisoformat(row["acquired_on"]),
         fx_transaction_id=row["fx_transaction_id"],
+    )
+
+
+def _row_to_cash_position(row: sqlite3.Row) -> CashPosition:
+    return CashPosition(
+        institution=row["institution"],
+        account_label=row["account_label"],
+        currency=row["currency"],
+        balance=Decimal(row["balance"]),
+        as_of_date=date.fromisoformat(row["as_of_date"]),
+        notes=row["notes"],
+    )
+
+
+def _row_to_holding_position(row: sqlite3.Row) -> HoldingPosition:
+    return HoldingPosition(
+        institution=row["institution"],
+        account_label=row["account_label"],
+        symbol=row["symbol"],
+        name=row["name"],
+        quantity=Decimal(row["quantity"]),
+        currency=row["currency"],
+        unit_cost=Decimal(row["unit_cost"]),
+        as_of_date=date.fromisoformat(row["as_of_date"]),
+        acquired_on=date.fromisoformat(row["acquired_on"])
+        if row["acquired_on"]
+        else None,
+        notes=row["notes"],
+    )
+
+
+def _row_to_fx_conversion(row: sqlite3.Row) -> FxConversion:
+    return FxConversion(
+        institution=row["institution"],
+        account_label=row["account_label"],
+        fx_date=date.fromisoformat(row["fx_date"]),
+        sold_currency=row["sold_currency"],
+        sold_amount=Decimal(row["sold_amount"]),
+        bought_currency=row["bought_currency"],
+        bought_amount=Decimal(row["bought_amount"]),
+        fee_currency=row["fee_currency"],
+        fee_amount=Decimal(row["fee_amount"]),
+        notes=row["notes"],
     )
