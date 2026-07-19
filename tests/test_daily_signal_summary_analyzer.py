@@ -1,5 +1,5 @@
 from app.analyzers.daily_signal_summary_analyzer import analyze_daily_signal_summary
-from app.models.analysis import FundamentalEvent, MacroContext, PriceSignal, SectorRotation
+from app.models.analysis import MacroContext, PriceSignal, SectorRotation
 
 
 def signal(symbol: str, unusual: bool = False) -> PriceSignal:
@@ -42,44 +42,30 @@ def test_summary_reports_no_material_signal_when_inputs_are_quiet():
         price_signals={"SPY": signal("SPY")},
         sector_rotation=rotation(),
         macro_context=mixed_macro(),
-        news_clusters=[],
-        fundamental_events=[],
     )
 
     assert result.status == "no_material_signal"
     assert "Price: no unusual moves" in result.drivers
     assert "Sector rotation: mixed" in result.drivers
     assert "Macro: mixed" in result.drivers
-    assert "News: no important clusters" in result.drivers
-    assert "Fundamental events: none detected" in result.drivers
+    assert all(not driver.startswith("News:") for driver in result.drivers)
+    assert all(not driver.startswith("Fundamental events:") for driver in result.drivers)
     assert (
         result.reason
-        == "No price, sector, macro, news, or fundamental event crossed review thresholds."
+        == "No price, sector, or macro signal crossed review thresholds."
     )
 
 
-def test_summary_requires_review_for_unusual_price_moves_and_events():
+def test_summary_requires_review_for_unusual_price_moves():
     result = analyze_daily_signal_summary(
         price_signals={"AAPL": signal("AAPL", unusual=True)},
         sector_rotation=rotation(),
         macro_context=mixed_macro(),
-        news_clusters=[],
-        fundamental_events=[
-            FundamentalEvent(
-                event_type="earnings_release",
-                related_symbol="AAPL",
-                headline="Apple reports earnings",
-                publisher="Reuters",
-                source_url="https://example.com/a",
-                confidence=0.85,
-            )
-        ],
     )
 
     assert result.status == "review_required"
     assert "Price: 1 unusual move" in result.drivers
-    assert "Fundamental events: 1 detected" in result.drivers
-    assert result.reason == "Review required because price moves and fundamental events crossed thresholds."
+    assert result.reason == "Review required because price moves crossed thresholds."
 
 
 def test_summary_monitors_when_context_is_not_quiet_but_no_review_signal():
@@ -94,8 +80,6 @@ def test_summary_monitors_when_context_is_not_quiet_but_no_review_signal():
             overall_regime="risk_off_with_macro_pressure",
             notes=[],
         ),
-        news_clusters=[],
-        fundamental_events=[],
     )
 
     assert result.status == "monitor"

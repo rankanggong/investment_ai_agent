@@ -10,7 +10,6 @@ def analyze_data_coverage(
     price_symbols: list[str],
     macro_symbols: list[str],
     popular_company_symbols: list[str],
-    news_item_count: int,
 ) -> DataCoverage:
     rows: list[DataCoverageRow] = []
     rows.extend(
@@ -29,7 +28,7 @@ def analyze_data_coverage(
     )
     rows.extend(
         _price_row(
-            "Section 9",
+            "Company bounds",
             symbol,
             price_history,
             min_rows=COMPANY_BOUNDS_MIN_ROWS,
@@ -40,8 +39,6 @@ def analyze_data_coverage(
         )
         for symbol in popular_company_symbols
     )
-    rows.append(_news_row(news_item_count))
-
     impacts = _impacts(rows)
     return DataCoverage(rows=rows, impacts=impacts)
 
@@ -74,21 +71,6 @@ def _price_row(
     )
 
 
-def _news_row(news_item_count: int) -> DataCoverageRow:
-    return DataCoverageRow(
-        category="News",
-        item="stored news",
-        status="available" if news_item_count > 0 else "missing",
-        rows=news_item_count,
-        latest="N/A",
-        detail=(
-            "Stored news rows available for clustering and event detection."
-            if news_item_count > 0
-            else "No stored news rows available for clustering or event detection."
-        ),
-    )
-
-
 def _status(row_count: int, min_rows: int) -> str:
     if row_count == 0:
         return "missing"
@@ -111,18 +93,14 @@ def _impacts(rows: list[DataCoverageRow]) -> list[str]:
             f"{_join_items(macro_gaps)} need at least {MACRO_MIN_ROWS} price rows."
         )
 
-    news_row = next(row for row in rows if row.category == "News")
-    if news_row.status != "available":
-        impacts.append("Sections 5-6 may be empty because no stored news items were found.")
-
     company_gaps = [
         row.item
         for row in rows
-        if row.category == "Section 9" and row.status != "available"
+        if row.category == "Company bounds" and row.status != "available"
     ]
     if company_gaps:
         impacts.append(
-            "Section 9 may omit "
+            "Company bounds may omit "
             f"{_join_items(company_gaps)} because fewer than "
             f"{COMPANY_BOUNDS_MIN_ROWS} price rows are available."
         )

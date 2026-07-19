@@ -1,0 +1,2 @@
+[console_scripts]
+finance-agent = app.main:main

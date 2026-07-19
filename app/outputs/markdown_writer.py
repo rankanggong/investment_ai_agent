@@ -5,9 +5,7 @@ from app.models.analysis import (
     CompanyPriceBounds,
     DataCoverage,
     DailySignalSummary,
-    FundamentalEvent,
     MacroContext,
-    NewsCluster,
     PlanImpact,
     PlanImpactItem,
     PriceSignal,
@@ -21,8 +19,6 @@ def render_daily_report(
     price_signals: dict[str, PriceSignal],
     sector_rotation: SectorRotation,
     macro_context: MacroContext | None = None,
-    news_clusters: list[NewsCluster] | None = None,
-    fundamental_events: list[FundamentalEvent] | None = None,
     daily_signal_summary: DailySignalSummary | None = None,
     data_coverage: DataCoverage | None = None,
     plan_impact: PlanImpact | None = None,
@@ -108,23 +104,7 @@ def render_daily_report(
     lines.extend(
         [
             "",
-            "## 5. Important News Clusters",
-            "",
-        ]
-    )
-    lines.extend(_render_news_clusters(news_clusters or []))
-    lines.extend(
-        [
-            "",
-            "## 6. Fundamental Events",
-            "",
-        ]
-    )
-    lines.extend(_render_fundamental_events(fundamental_events))
-    lines.extend(
-        [
-            "",
-            "## 7. Impact On My Plan",
+            "## 5. Impact On My Plan",
             "",
         ]
     )
@@ -132,15 +112,7 @@ def render_daily_report(
     lines.extend(
         [
             "",
-            "## 8. What To Read Manually",
-            "",
-        ]
-    )
-    lines.extend(_render_manual_reading(report_signals))
-    lines.extend(
-        [
-            "",
-            "## 9. Popular Company Price Bounds",
+            "## 6. Popular Company Price Bounds",
             "",
         ]
     )
@@ -252,71 +224,6 @@ def _render_macro_context(macro_context: MacroContext | None) -> list[str]:
     return lines
 
 
-def _render_news_clusters(news_clusters: list[NewsCluster]) -> list[str]:
-    if not news_clusters:
-        return ["No important news clusters available."]
-
-    lines: list[str] = []
-    for cluster in news_clusters:
-        if lines:
-            lines.append("")
-        lines.extend(
-            [
-                f"### {cluster.topic}",
-                "",
-                f"Assets: {_format_list(cluster.related_assets)}",
-                "",
-                f"Items: {cluster.item_count}",
-                "",
-                f"Sources: {cluster.source_count}",
-                "",
-                f"Confidence: {cluster.confidence:.2f}",
-                "",
-                f"Why it matters: {cluster.why_it_matters or 'No deterministic explanation available.'}",
-                "",
-                "Representative headlines:",
-            ]
-        )
-        for headline, url in zip(
-            cluster.representative_headlines,
-            cluster.source_urls,
-        ):
-            lines.append(f"- {headline} ({url})")
-        manual_read_urls = cluster.manual_read_urls or cluster.source_urls
-        if manual_read_urls:
-            lines.extend(["", "Manual read:"])
-            lines.extend(f"- {url}" for url in manual_read_urls)
-    return lines
-
-
-def _render_fundamental_events(
-    fundamental_events: list[FundamentalEvent] | None,
-) -> list[str]:
-    if fundamental_events is None:
-        return ["Deferred to Phase 4."]
-    if not fundamental_events:
-        return ["No fundamental events detected from stored news."]
-
-    lines = [
-        "| Event | Asset | Review Type | Confidence | Why It Matters | Headline | Source |",
-        "|---|---|---|---:|---|---|---|",
-    ]
-    for event in fundamental_events:
-        source = (
-            f"{event.publisher} ({event.source_url})"
-            if event.publisher
-            else event.source_url
-        )
-        lines.append(
-            f"| {event.event_type} | {event.related_symbol} | "
-            f"{event.review_type or 'fundamental_review'} | "
-            f"{event.confidence:.2f} | "
-            f"{event.why_it_matters or 'This event may affect fundamental assumptions.'} | "
-            f"{event.headline} | {source} |"
-        )
-    return lines
-
-
 def _render_plan_impact(plan_impact: PlanImpact | None) -> list[str]:
     if plan_impact is None:
         return ["Deferred to Phase 5."]
@@ -374,28 +281,6 @@ def _render_plan_impact_bucket(
     for item in items:
         lines.append(f"| {item.symbol} | {item.score} | {'; '.join(item.evidence)} |")
     return lines
-
-
-def _render_manual_reading(report_signals: ReportSignals | None) -> list[str]:
-    if report_signals is None or not report_signals.manual_reading:
-        return ["No manual reading items generated."]
-
-    lines = [
-        "| Priority | Asset | Type | Reason | Source |",
-        "|---:|---|---|---|---|",
-    ]
-    for item in report_signals.manual_reading[:10]:
-        lines.append(
-            f"| {item.priority} | {_safe_table_cell(item.related_symbol)} | "
-            f"{_safe_table_cell(item.source_type)} | "
-            f"{_safe_table_cell(item.reason)} | "
-            f"{_safe_table_cell(item.title)} ({_safe_table_cell(item.url)}) |"
-        )
-    return lines
-
-
-def _safe_table_cell(value: str) -> str:
-    return value.replace("\r", " ").replace("\n", " ").replace("|", "\\|")
 
 
 def _render_company_price_bounds(

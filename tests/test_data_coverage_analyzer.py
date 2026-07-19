@@ -22,7 +22,7 @@ def history(symbol: str, rows: int) -> list[PriceBar]:
     return [bar(day, symbol) for day in range(rows)]
 
 
-def test_data_coverage_classifies_prices_macro_news_and_company_bounds():
+def test_data_coverage_classifies_prices_macro_and_company_bounds():
     result = analyze_data_coverage(
         price_history={
             "SPY": history("SPY", 8),
@@ -32,7 +32,6 @@ def test_data_coverage_classifies_prices_macro_news_and_company_bounds():
         price_symbols=["SPY", "QQQ"],
         macro_symbols=["SPY", "TLT", "UUP"],
         popular_company_symbols=["AAPL", "MSFT"],
-        news_item_count=0,
     )
 
     assert result.rows[0].category == "Prices"
@@ -47,13 +46,15 @@ def test_data_coverage_classifies_prices_macro_news_and_company_bounds():
         "Needs at least 6 price rows for 5D macro context."
     )
     assert _row(result, "Macro", "UUP").status == "missing"
-    assert _row(result, "Section 9", "AAPL").status == "insufficient"
-    assert _row(result, "Section 9", "MSFT").status == "missing"
-    assert _row(result, "News", "stored news").status == "missing"
+    assert _row(result, "Company bounds", "AAPL").status == "insufficient"
+    assert _row(result, "Company bounds", "MSFT").status == "missing"
+    assert all(row.category != "News" for row in result.rows)
 
     assert "Section 4 may be unknown because TLT and UUP need at least 6 price rows." in result.impacts
-    assert "Sections 5-6 may be empty because no stored news items were found." in result.impacts
-    assert "Section 9 may omit AAPL and MSFT because fewer than 20 price rows are available." in result.impacts
+    assert (
+        "Company bounds may omit AAPL and MSFT because fewer than 20 price rows are available."
+        in result.impacts
+    )
 
 
 def test_data_coverage_reports_no_impacts_when_inputs_are_sufficient():
@@ -66,7 +67,6 @@ def test_data_coverage_reports_no_impacts_when_inputs_are_sufficient():
         price_symbols=["SPY"],
         macro_symbols=["SPY", "TLT"],
         popular_company_symbols=["AAPL"],
-        news_item_count=3,
     )
 
     assert all(row.status == "available" for row in result.rows)

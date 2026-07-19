@@ -6,10 +6,8 @@ from app.models.analysis import (
     DataCoverage,
     DataCoverageRow,
     DailySignalSummary,
-    FundamentalEvent,
     MacroContext,
     MacroEvidenceRow,
-    NewsCluster,
     PlanImpact,
     PlanImpactItem,
     PriceSignal,
@@ -47,6 +45,10 @@ def test_render_daily_report_includes_required_sections():
     assert "## 1. Market Overview" in content
     assert "## 3. Sector Rotation" in content
     assert "| SPY | 1.00% | 2.00% | 3.00% |" in content
+    assert "Important News Clusters" not in content
+    assert "Fundamental Events" not in content
+    assert "What To Read Manually" not in content
+    assert "stored news" not in content.lower()
 
 
 def test_render_daily_report_includes_daily_signal_summary_before_market_overview():
@@ -67,21 +69,15 @@ def test_render_daily_report_includes_daily_signal_summary_before_market_overvie
                 "Price: no unusual moves",
                 "Sector rotation: mixed",
                 "Macro: mixed",
-                "News: no important clusters",
-                "Fundamental events: none detected",
             ],
-            reason="No price, sector, macro, news, or fundamental event crossed review thresholds.",
+            reason="No price, sector, or macro signal crossed review thresholds.",
         ),
     )
 
     assert content.index("## 0. What Matters Today") < content.index("## 1. Market Overview")
     assert "Status: no_material_signal" in content
     assert "- Price: no unusual moves" in content
-    assert "- Fundamental events: none detected" in content
-    assert (
-        "Reason: No price, sector, macro, news, or fundamental event crossed review thresholds."
-        in content
-    )
+    assert "Reason: No price, sector, or macro signal crossed review thresholds." in content
 
 
 def test_render_daily_report_includes_data_coverage_after_daily_signal_summary():
@@ -106,18 +102,9 @@ def test_render_daily_report_includes_data_coverage_after_daily_signal_summary()
                     latest="N/A",
                     detail="Needs at least 6 price rows for 5D macro context.",
                 ),
-                DataCoverageRow(
-                    category="News",
-                    item="stored news",
-                    status="missing",
-                    rows=0,
-                    latest="N/A",
-                    detail="No stored news rows available for clustering or event detection.",
-                ),
             ],
             impacts=[
                 "Section 4 may be unknown because UUP need at least 6 price rows.",
-                "Sections 5-6 may be empty because no stored news items were found.",
             ],
         ),
     )
@@ -130,7 +117,6 @@ def test_render_daily_report_includes_data_coverage_after_daily_signal_summary()
         "Needs at least 6 price rows for 5D macro context. |"
     ) in content
     assert "Impact:" in content
-    assert "- Sections 5-6 may be empty because no stored news items were found." in content
 
 
 def test_render_daily_report_includes_macro_context_when_available():
@@ -162,90 +148,6 @@ def test_render_daily_report_includes_macro_context_when_available():
     assert "Gold: gold_supported" in content
     assert "Regime: risk_on_with_macro_support" in content
     assert "- Long-duration proxies are firm." in content
-
-
-def test_render_daily_report_includes_news_clusters_when_available():
-    content = render_daily_report(
-        report_date=date(2026, 5, 16),
-        price_signals={},
-        sector_rotation=SectorRotation(
-            strong_sectors=[],
-            weak_sectors=[],
-            risk_on_score=0.0,
-            growth_vs_value="unknown",
-            cyclical_vs_defensive="unknown",
-            notes=[],
-        ),
-        news_clusters=[
-            NewsCluster(
-                topic="fed hopes",
-                related_assets=["SPY"],
-                representative_headlines=["SPY rallies as Fed hopes lift market"],
-                source_urls=["https://example.com/a"],
-                item_count=2,
-                confidence=0.8,
-            )
-        ],
-    )
-
-    assert "## 5. Important News Clusters" in content
-    assert "### fed hopes" in content
-    assert "Assets: SPY" in content
-    assert "Items: 2" in content
-    assert "Confidence: 0.80" in content
-    assert "- SPY rallies as Fed hopes lift market (https://example.com/a)" in content
-
-
-def test_render_daily_report_includes_fundamental_events_when_available():
-    content = render_daily_report(
-        report_date=date(2026, 5, 16),
-        price_signals={},
-        sector_rotation=SectorRotation(
-            strong_sectors=[],
-            weak_sectors=[],
-            risk_on_score=0.0,
-            growth_vs_value="unknown",
-            cyclical_vs_defensive="unknown",
-            notes=[],
-        ),
-        fundamental_events=[
-            FundamentalEvent(
-                event_type="earnings_release",
-                related_symbol="AAPL",
-                headline="Apple reports quarterly earnings and revenue beat estimates",
-                publisher="Reuters",
-                source_url="https://example.com/a",
-                confidence=0.85,
-            )
-        ],
-    )
-
-    assert "## 6. Fundamental Events" in content
-    assert "| Event | Asset | Review Type | Confidence | Why It Matters | Headline | Source |" in content
-    assert (
-        "| earnings_release | AAPL | fundamental_review | 0.85 | "
-        "This event may affect fundamental assumptions. | "
-        "Apple reports quarterly earnings and revenue beat estimates | "
-        "Reuters (https://example.com/a) |"
-    ) in content
-
-
-def test_render_daily_report_shows_empty_fundamental_events_message():
-    content = render_daily_report(
-        report_date=date(2026, 5, 16),
-        price_signals={},
-        sector_rotation=SectorRotation(
-            strong_sectors=[],
-            weak_sectors=[],
-            risk_on_score=0.0,
-            growth_vs_value="unknown",
-            cyclical_vs_defensive="unknown",
-            notes=[],
-        ),
-        fundamental_events=[],
-    )
-
-    assert "No fundamental events detected from stored news." in content
 
 
 def test_render_daily_report_includes_plan_impact_review():
@@ -285,7 +187,7 @@ def test_render_daily_report_includes_plan_impact_review():
         ),
     )
 
-    assert "## 7. Impact On My Plan" in content
+    assert "## 5. Impact On My Plan" in content
     assert "Research support only. Not a buy/sell instruction." in content
     assert "### High-conviction accumulation review" in content
     assert "| QQQ | 4 | 20D trend positive; macro regime supports broad risk assets |" in content
@@ -294,7 +196,7 @@ def test_render_daily_report_includes_plan_impact_review():
     assert "Deferred to Phase 5." not in content
 
 
-def test_render_daily_report_includes_detailed_sections_four_to_six():
+def test_render_daily_report_includes_detailed_macro_context():
     content = render_daily_report(
         report_date=date(2026, 5, 16),
         price_signals={},
@@ -322,50 +224,12 @@ def test_render_daily_report_includes_detailed_sections_four_to_six():
                 )
             ],
         ),
-        news_clusters=[
-            NewsCluster(
-                topic="fed pressure",
-                related_assets=["SPY"],
-                representative_headlines=["SPY slips as rates rise"],
-                source_urls=["https://example.com/a"],
-                item_count=3,
-                confidence=0.9,
-                source_count=2,
-                why_it_matters=(
-                    "3 stored headlines from 2 sources mention SPY, so this cluster may explain "
-                    "asset-specific attention."
-                ),
-                manual_read_urls=["https://example.com/a"],
-            )
-        ],
-        fundamental_events=[
-            FundamentalEvent(
-                event_type="regulatory_event",
-                related_symbol="NVDA",
-                headline="Nvidia faces antitrust probe from regulator",
-                publisher="Reuters",
-                source_url="https://example.com/n",
-                confidence=0.85,
-                review_type="regulatory_risk_review",
-                why_it_matters="Regulatory events can create legal, financial, or operating constraints.",
-            )
-        ],
     )
 
     assert "| Area | Signal | Evidence | Interpretation |" in content
     assert (
         "| Rates | rates_pressure | TLT 5D -2.10% | "
         "Long-duration proxies are weak, suggesting rate pressure. |"
-    ) in content
-    assert "Why it matters: 3 stored headlines from 2 sources mention SPY" in content
-    assert "Sources: 2" in content
-    assert "Manual read:" in content
-    assert "- https://example.com/a" in content
-    assert "| Event | Asset | Review Type | Confidence | Why It Matters | Headline | Source |" in content
-    assert (
-        "| regulatory_event | NVDA | regulatory_risk_review | 0.85 | "
-        "Regulatory events can create legal, financial, or operating constraints. | "
-        "Nvidia faces antitrust probe from regulator | Reuters (https://example.com/n) |"
     ) in content
 
 
@@ -399,7 +263,7 @@ def test_render_daily_report_includes_popular_company_price_bounds():
         ),
     )
 
-    assert "## 9. Popular Company Price Bounds" in content
+    assert "## 6. Popular Company Price Bounds" in content
     assert (
         "Research support only. These are price-derived review bands, not intrinsic value."
         in content
@@ -410,8 +274,8 @@ def test_render_daily_report_includes_popular_company_price_bounds():
     assert "- MSFT skipped: no price history available." in content
 
 
-def test_render_daily_report_includes_report_signals_watch_next_and_manual_reading():
-    from app.models.analysis import ManualReadItem, ReportSignals, SignalInsight, WatchNextItem
+def test_render_daily_report_includes_report_signals_watch_next():
+    from app.models.analysis import ReportSignals, SignalInsight, WatchNextItem
 
     content = render_daily_report(
         report_date=date(2026, 5, 16),
@@ -447,61 +311,10 @@ def test_render_daily_report_includes_report_signals_watch_next_and_manual_readi
                     source="price",
                 )
             ],
-            manual_reading=[
-                ManualReadItem(
-                    title="Apple reports quarterly earnings",
-                    url="https://example.com/aapl",
-                    reason="Earnings can reset assumptions.",
-                    source_type="earnings_review",
-                    related_symbol="AAPL",
-                    priority=100,
-                )
-            ],
+            manual_reading=[],
         ),
     )
 
     assert "Watch next:" in content
     assert "- SOXX: Whether SOXX follow-through confirms the unusual move." in content
-    assert "## 8. What To Read Manually" in content
-    assert "| Priority | Asset | Type | Reason | Source |" in content
-    assert (
-        "| 100 | AAPL | earnings_review | Earnings can reset assumptions. | "
-        "Apple reports quarterly earnings (https://example.com/aapl) |"
-    ) in content
-
-
-def test_render_daily_report_escapes_manual_reading_table_cells():
-    from app.models.analysis import ManualReadItem, ReportSignals
-
-    content = render_daily_report(
-        report_date=date(2026, 5, 16),
-        price_signals={},
-        sector_rotation=SectorRotation(
-            strong_sectors=[],
-            weak_sectors=[],
-            risk_on_score=0.0,
-            growth_vs_value="unknown",
-            cyclical_vs_defensive="unknown",
-            notes=[],
-        ),
-        report_signals=ReportSignals(
-            insights=[],
-            watch_next=[],
-            manual_reading=[
-                ManualReadItem(
-                    title="Apple | reports\nquarterly earnings",
-                    url="https://example.com/a|b\nc",
-                    reason="Margin | pressure\nrequires review",
-                    source_type="earnings|review",
-                    related_symbol="BRK|B",
-                    priority=75,
-                )
-            ],
-        ),
-    )
-
-    assert (
-        "| 75 | BRK\\|B | earnings\\|review | "
-        "Margin \\| pressure requires review | "
-        "Apple \\| reports quarterly earnings (https://example.com/a\\|b c) |"
-    ) in content
+    assert "What To Read Manually" not in content

@@ -1,8 +1,6 @@
 from app.models.analysis import (
     DailySignalSummary,
-    FundamentalEvent,
     MacroContext,
-    NewsCluster,
     PriceSignal,
     SectorRotation,
 )
@@ -14,35 +12,23 @@ def analyze_daily_signal_summary(
     price_signals: dict[str, PriceSignal],
     sector_rotation: SectorRotation,
     macro_context: MacroContext | None,
-    news_clusters: list[NewsCluster],
-    fundamental_events: list[FundamentalEvent],
 ) -> DailySignalSummary:
     unusual_count = sum(1 for signal in price_signals.values() if signal.is_unusual_move)
-    cluster_count = len(news_clusters)
-    event_count = len(fundamental_events)
 
     drivers = [
         _price_driver(unusual_count),
         _sector_driver(sector_rotation),
         _macro_driver(macro_context),
-        _news_driver(cluster_count),
-        _fundamental_driver(event_count),
     ]
 
     review_reasons: list[str] = []
     if unusual_count:
         review_reasons.append("price moves")
-    if event_count:
-        review_reasons.append("fundamental events")
-
     monitor_reasons: list[str] = []
     if _sector_needs_monitor(sector_rotation):
         monitor_reasons.append("sector rotation")
     if _macro_needs_monitor(macro_context):
         monitor_reasons.append("macro context")
-    if cluster_count:
-        monitor_reasons.append("news clusters")
-
     if review_reasons:
         return DailySignalSummary(
             status="review_required",
@@ -60,7 +46,7 @@ def analyze_daily_signal_summary(
     return DailySignalSummary(
         status="no_material_signal",
         drivers=drivers,
-        reason="No price, sector, macro, news, or fundamental event crossed review thresholds.",
+        reason="No price, sector, or macro signal crossed review thresholds.",
     )
 
 
@@ -87,18 +73,6 @@ def _macro_driver(macro_context: MacroContext | None) -> str:
     if macro_context.overall_regime == "unknown":
         return "Macro: unknown"
     return f"Macro: {macro_context.overall_regime}"
-
-
-def _news_driver(cluster_count: int) -> str:
-    if cluster_count == 0:
-        return "News: no important clusters"
-    return f"News: {cluster_count} important {_plural('cluster', cluster_count)}"
-
-
-def _fundamental_driver(event_count: int) -> str:
-    if event_count == 0:
-        return "Fundamental events: none detected"
-    return f"Fundamental events: {event_count} detected"
 
 
 def _sector_needs_monitor(sector_rotation: SectorRotation) -> bool:

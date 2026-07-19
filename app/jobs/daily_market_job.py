@@ -4,16 +4,13 @@ from pathlib import Path
 from app.analyzers.company_price_bounds_analyzer import analyze_company_price_bounds
 from app.analyzers.data_coverage_analyzer import analyze_data_coverage
 from app.analyzers.daily_signal_summary_analyzer import analyze_daily_signal_summary
-from app.analyzers.fundamental_event_analyzer import analyze_fundamental_events
 from app.analyzers.macro_context_analyzer import analyze_macro_context
-from app.analyzers.news_cluster_analyzer import analyze_news_clusters
 from app.analyzers.plan_impact_analyzer import analyze_plan_impact
 from app.analyzers.price_move_analyzer import analyze_price_moves
 from app.analyzers.report_signal_analyzer import analyze_report_signals
 from app.analyzers.sector_rotation_analyzer import analyze_sector_rotation
 from app.config import load_watchlist
 from app.outputs.markdown_writer import render_daily_report, write_daily_report
-from app.storage.repositories.news_repo import NewsRepository
 from app.storage.repositories.price_repo import PriceRepository
 from app.storage.repositories.report_repo import ReportRepository
 
@@ -34,16 +31,12 @@ def generate_daily_report(
         benchmark_symbol="SPY",
     )
     macro_context = analyze_macro_context(signals)
-    recent_news = NewsRepository(db_path).get_recent_items()
     data_coverage = analyze_data_coverage(
         price_history=history,
         price_symbols=[asset.symbol for asset in watchlist.assets],
         macro_symbols=["SPY", "TLT", "UUP", "HYG", "LQD", "GLD"],
         popular_company_symbols=watchlist.symbols_for_group("popular_companies"),
-        news_item_count=len(recent_news),
     )
-    news_clusters = analyze_news_clusters(recent_news)
-    fundamental_events = analyze_fundamental_events(recent_news)
     company_price_bounds = analyze_company_price_bounds(
         history,
         watchlist.symbols_for_group("popular_companies"),
@@ -52,22 +45,20 @@ def generate_daily_report(
         signals,
         sector_rotation,
         macro_context,
-        news_clusters,
-        fundamental_events,
+        [],
+        [],
     )
     daily_signal_summary = analyze_daily_signal_summary(
         signals,
         sector_rotation,
         macro_context,
-        news_clusters,
-        fundamental_events,
     )
     report_signals = analyze_report_signals(
         price_signals=signals,
         sector_rotation=sector_rotation,
         macro_context=macro_context,
-        news_clusters=news_clusters,
-        fundamental_events=fundamental_events,
+        news_clusters=[],
+        fundamental_events=[],
         data_coverage=data_coverage,
     )
     effective_date = report_date or _latest_report_date(history) or date.today()
@@ -76,8 +67,6 @@ def generate_daily_report(
         price_signals=signals,
         sector_rotation=sector_rotation,
         macro_context=macro_context,
-        news_clusters=news_clusters,
-        fundamental_events=fundamental_events,
         daily_signal_summary=daily_signal_summary,
         data_coverage=data_coverage,
         plan_impact=plan_impact,
