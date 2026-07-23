@@ -73,5 +73,19 @@ def test_data_coverage_reports_no_impacts_when_inputs_are_sufficient():
     assert result.impacts == ["No data coverage gaps detected for configured diagnostics."]
 
 
+def test_missing_usd_cnh_is_degraded_and_is_reported_as_a_gap():
+    result = analyze_data_coverage(
+        price_history={"SPY": history("SPY", 25)},
+        price_symbols=["SPY", "USD/CNH"],
+        macro_symbols=["SPY"],
+        popular_company_symbols=[],
+    )
+
+    assert _row(result, "Prices", "USD/CNH").status == "degraded"
+    assert result.status == "degraded"
+    assert any("USD/CNH" in impact for impact in result.impacts)
+    assert all("No data coverage gaps" not in impact for impact in result.impacts)
+
+
 def _row(result, category: str, item: str):
     return next(row for row in result.rows if row.category == category and row.item == item)

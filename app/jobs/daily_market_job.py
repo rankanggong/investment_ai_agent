@@ -5,12 +5,13 @@ from app.analyzers.company_price_bounds_analyzer import analyze_company_price_bo
 from app.analyzers.data_coverage_analyzer import analyze_data_coverage
 from app.analyzers.daily_signal_summary_analyzer import analyze_daily_signal_summary
 from app.analyzers.macro_context_analyzer import analyze_macro_context
-from app.analyzers.plan_impact_analyzer import analyze_plan_impact
 from app.analyzers.price_move_analyzer import analyze_price_moves
 from app.analyzers.report_signal_analyzer import analyze_report_signals
 from app.analyzers.sector_rotation_analyzer import analyze_sector_rotation
 from app.config import load_watchlist
+from app.models.analysis import NewsQualityGate
 from app.outputs.markdown_writer import render_daily_report, write_daily_report
+from app.steward.models import PortfolioReportState
 from app.steward.storage import StewardRepository, initialize_steward_database
 from app.storage.repositories.price_repo import PriceRepository
 from app.storage.repositories.report_repo import ReportRepository
@@ -43,17 +44,20 @@ def generate_daily_report(
         history,
         watchlist.symbols_for_group("popular_companies"),
     )
-    plan_impact = analyze_plan_impact(
-        signals,
-        sector_rotation,
-        macro_context,
-        [],
-        [],
+    news_quality = NewsQualityGate(
+        entity_precision=None,
+        precision_threshold=0.80,
+        status="disabled",
+        news_score=None,
+        fundamental_score=None,
+        portfolio_action="unavailable",
+        reasons=["News collection is disabled."],
     )
     daily_signal_summary = analyze_daily_signal_summary(
         signals,
         sector_rotation,
         macro_context,
+        news_quality=news_quality,
     )
     report_signals = analyze_report_signals(
         price_signals=signals,
@@ -63,10 +67,14 @@ def generate_daily_report(
         fundamental_events=[],
         data_coverage=data_coverage,
     )
-    portfolio_holdings = None
+    portfolio_state = None
     if steward_db_path is not None:
         initialize_steward_database(steward_db_path)
-        portfolio_holdings = StewardRepository(steward_db_path).load_state().holdings
+        steward_state = StewardRepository(steward_db_path).load_state()
+        portfolio_state = PortfolioReportState(
+            holdings=steward_state.holdings,
+            fx_conversions=steward_state.fx_conversions,
+        )
     effective_date = report_date or _latest_report_date(history) or date.today()
     content = render_daily_report(
         report_date=effective_date,
@@ -75,10 +83,10 @@ def generate_daily_report(
         macro_context=macro_context,
         daily_signal_summary=daily_signal_summary,
         data_coverage=data_coverage,
-        plan_impact=plan_impact,
         company_price_bounds=company_price_bounds,
         report_signals=report_signals,
-        portfolio_holdings=portfolio_holdings,
+        portfolio_state=portfolio_state,
+        news_quality=news_quality,
     )
     path = write_daily_report(report_dir, effective_date, content)
     ReportRepository(db_path).insert_report(

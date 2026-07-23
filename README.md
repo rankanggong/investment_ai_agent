@@ -13,6 +13,12 @@ The active workflow is intentionally data-first:
   The existing news schema and implementation remain in the repository so the
   feature can be restored without deleting historical data.
 
+The dormant news path is fail-closed: query symbols are collection provenance,
+not entity links. Articles must pass ticker/name entity linking before they can
+be clustered; ETF, company, index, and commodity events use separate schemas
+and are deduplicated at the event level. If entity precision is below 80%, news
+and fundamental scores are null and portfolio action is unavailable.
+
 The market workflow is price-only:
 
 ```bash
@@ -28,10 +34,10 @@ python -m app.main collect prices --yfinance
 python -m app.main report daily
 ```
 
-The daily market report reads holding snapshots from the steward database and
-includes them in `Portfolio Holdings`. Cash positions and FX conversions are
-not included in the daily market report. Use `--steward-db` to select a
-non-default steward database.
+The daily market report reads holding snapshots and FX conversions from the
+steward database and includes them in `Portfolio Holdings` and `FX Conversions`.
+Cash positions are not included in the daily market report. Use `--steward-db`
+to select a non-default steward database.
 
 CSV imports require these columns:
 

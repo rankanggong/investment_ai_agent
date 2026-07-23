@@ -100,3 +100,11 @@ class StewardState:
     cash_positions: list[CashPosition]
     holdings: list[HoldingPosition]
     fx_conversions: list[FxConversion]
+
+
+@dataclass(frozen=True)
+class PortfolioReportState:
+    """The non-cash steward state allowed to cross into the daily report."""
+
+    holdings: list[HoldingPosition]
+    fx_conversions: list[FxConversion]

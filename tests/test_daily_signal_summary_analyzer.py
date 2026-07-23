@@ -1,5 +1,5 @@
 from app.analyzers.daily_signal_summary_analyzer import analyze_daily_signal_summary
-from app.models.analysis import MacroContext, PriceSignal, SectorRotation
+from app.models.analysis import MacroContext, NewsQualityGate, PriceSignal, SectorRotation
 
 
 def signal(symbol: str, unusual: bool = False) -> PriceSignal:
@@ -86,3 +86,23 @@ def test_summary_monitors_when_context_is_not_quiet_but_no_review_signal():
     assert "Sector rotation: risk-on score 0.45" in result.drivers
     assert "Macro: risk_off_with_macro_pressure" in result.drivers
     assert result.reason == "Monitor because sector rotation and macro context crossed thresholds."
+
+
+def test_summary_fails_data_quality_before_market_review_signals():
+    result = analyze_daily_signal_summary(
+        price_signals={"SPY": signal("SPY", unusual=True)},
+        sector_rotation=rotation(score=0.45),
+        macro_context=mixed_macro(),
+        news_quality=NewsQualityGate(
+            entity_precision=0.42,
+            precision_threshold=0.80,
+            status="data_quality_review",
+            news_score=None,
+            fundamental_score=None,
+            portfolio_action="unavailable",
+            reasons=["Entity precision 42.00% is below threshold 80.00%."],
+        ),
+    )
+
+    assert result.status == "data_quality_failed"
+    assert result.reason == "Data quality failed: entity precision is below threshold."

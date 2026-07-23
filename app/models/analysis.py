@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,17 @@ class DataCoverageRow:
 class DataCoverage:
     rows: list[DataCoverageRow]
     impacts: list[str]
+    status: str = ""
+
+    def __post_init__(self) -> None:
+        if self.status:
+            return
+        computed = (
+            "degraded"
+            if any(row.status != "available" for row in self.rows)
+            else "available"
+        )
+        object.__setattr__(self, "status", computed)
 
 
 @dataclass(frozen=True)
@@ -145,6 +157,36 @@ class NewsItem:
     published_at: datetime | None
     related_symbol: str
     source: str
+    query_symbol: str | None = None
+    entity_kind: str | None = None
+    entity_confidence: float = 0.0
+    entity_match_reason: str = ""
+
+
+@dataclass(frozen=True)
+class AssetEntity:
+    symbol: str
+    name: str
+    entity_kind: Literal["etf", "company", "index", "commodity"]
+    aliases: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class NewsQualityGate:
+    entity_precision: float | None
+    precision_threshold: float
+    status: str
+    news_score: float | None
+    fundamental_score: float | None
+    portfolio_action: str
+    reasons: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class EntityLinkResult:
+    linked_items: list[NewsItem]
+    rejected_items: list[NewsItem]
+    gate: NewsQualityGate
 
 
 @dataclass(frozen=True)
@@ -170,3 +212,91 @@ class FundamentalEvent:
     confidence: float
     review_type: str = ""
     why_it_matters: str = ""
+
+
+@dataclass(frozen=True)
+class CompanyEvent:
+    event_type: Literal[
+        "earnings_release",
+        "guidance_change",
+        "buyback",
+        "dividend_change",
+        "management_change",
+        "regulatory_event",
+    ]
+    related_symbol: str
+    headline: str
+    publisher: str | None
+    source_urls: list[str]
+    confidence: float
+    article_count: int
+    event_date: str
+    review_type: str = "company_event_review"
+    why_it_matters: str = "Company event requires primary-source review."
+
+    @property
+    def source_url(self) -> str:
+        return self.source_urls[0] if self.source_urls else ""
+
+
+@dataclass(frozen=True)
+class EtfEvent:
+    event_type: Literal[
+        "fee_change",
+        "distribution_change",
+        "methodology_change",
+        "rebalance",
+        "flow_event",
+    ]
+    related_symbol: str
+    headline: str
+    publisher: str | None
+    source_urls: list[str]
+    confidence: float
+    article_count: int
+    event_date: str
+    review_type: str = "etf_event_review"
+    why_it_matters: str = "ETF event requires fund-specific review."
+
+    @property
+    def source_url(self) -> str:
+        return self.source_urls[0] if self.source_urls else ""
+
+
+@dataclass(frozen=True)
+class IndexEvent:
+    event_type: Literal["methodology_change", "constituent_change", "rebalance"]
+    related_symbol: str
+    headline: str
+    publisher: str | None
+    source_urls: list[str]
+    confidence: float
+    article_count: int
+    event_date: str
+    review_type: str = "index_event_review"
+    why_it_matters: str = "Index event requires methodology or constituent review."
+
+    @property
+    def source_url(self) -> str:
+        return self.source_urls[0] if self.source_urls else ""
+
+
+@dataclass(frozen=True)
+class CommodityEvent:
+    event_type: Literal["supply_disruption", "inventory_change", "policy_event"]
+    related_symbol: str
+    headline: str
+    publisher: str | None
+    source_urls: list[str]
+    confidence: float
+    article_count: int
+    event_date: str
+    review_type: str = "commodity_event_review"
+    why_it_matters: str = "Commodity event requires supply, inventory, or policy review."
+
+    @property
+    def source_url(self) -> str:
+        return self.source_urls[0] if self.source_urls else ""
+
+
+AssetEvent = CompanyEvent | EtfEvent | IndexEvent | CommodityEvent

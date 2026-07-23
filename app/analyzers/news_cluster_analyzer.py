@@ -26,12 +26,16 @@ STOPWORDS = {
     "with",
 }
 
+MIN_ENTITY_CONFIDENCE = 0.80
+
 
 def analyze_news_clusters(
     items: list[NewsItem],
     max_clusters: int = 5,
 ) -> list[NewsCluster]:
-    unique_items = _deduplicate(items)
+    unique_items = _deduplicate(
+        [item for item in items if item.entity_confidence >= MIN_ENTITY_CONFIDENCE]
+    )
     grouped: dict[str, list[NewsItem]] = defaultdict(list)
     for item in unique_items:
         grouped[item.related_symbol].append(item)

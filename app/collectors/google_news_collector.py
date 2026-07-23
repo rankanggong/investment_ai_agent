@@ -65,6 +65,7 @@ def _element_to_item(element: ET.Element, symbol: str) -> NewsItem:
         published_at=_parse_date(_text(element, "pubDate")),
         related_symbol=symbol,
         source="google_news_rss",
+        query_symbol=symbol,
     )
 
 

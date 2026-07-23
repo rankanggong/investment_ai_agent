@@ -7,13 +7,12 @@ from app.models.analysis import (
     DataCoverage,
     DailySignalSummary,
     MacroContext,
-    PlanImpact,
-    PlanImpactItem,
+    NewsQualityGate,
     PriceSignal,
     ReportSignals,
     SectorRotation,
 )
-from app.steward.models import HoldingPosition
+from app.steward.models import FxConversion, HoldingPosition, PortfolioReportState
 
 
 def render_daily_report(
@@ -23,10 +22,10 @@ def render_daily_report(
     macro_context: MacroContext | None = None,
     daily_signal_summary: DailySignalSummary | None = None,
     data_coverage: DataCoverage | None = None,
-    plan_impact: PlanImpact | None = None,
     company_price_bounds: CompanyPriceBounds | None = None,
     report_signals: ReportSignals | None = None,
-    portfolio_holdings: list[HoldingPosition] | None = None,
+    portfolio_state: PortfolioReportState | None = None,
+    news_quality: NewsQualityGate | None = None,
 ) -> str:
     lines = [
         f"# Daily Market Brief - {report_date.isoformat()}",
@@ -41,12 +40,12 @@ def render_daily_report(
     lines.extend(
         [
             "",
-            "## Data Coverage",
+            "## Data Quality",
             "",
         ]
     )
-    lines.extend(_render_data_coverage(data_coverage))
-    if portfolio_holdings is not None:
+    lines.extend(_render_data_coverage(data_coverage, news_quality))
+    if portfolio_state is not None:
         lines.extend(
             [
                 "",
@@ -54,7 +53,15 @@ def render_daily_report(
                 "",
             ]
         )
-        lines.extend(_render_portfolio_holdings(portfolio_holdings))
+        lines.extend(_render_portfolio_holdings(portfolio_state.holdings))
+        lines.extend(
+            [
+                "",
+                "## FX Conversions",
+                "",
+            ]
+        )
+        lines.extend(_render_fx_conversions(portfolio_state.fx_conversions))
     lines.extend(
         [
             "",
@@ -116,11 +123,11 @@ def render_daily_report(
     lines.extend(
         [
             "",
-            "## 5. Impact On My Plan",
+            "## 5. Triggered Strategy Rules",
             "",
         ]
     )
-    lines.extend(_render_plan_impact(plan_impact))
+    lines.extend(_render_strategy_rules(news_quality))
     lines.extend(
         [
             "",
@@ -182,22 +189,60 @@ def _render_watch_next(report_signals: ReportSignals | None) -> list[str]:
     return lines
 
 
-def _render_data_coverage(data_coverage: DataCoverage | None) -> list[str]:
+def _render_data_coverage(
+    data_coverage: DataCoverage | None,
+    news_quality: NewsQualityGate | None,
+) -> list[str]:
     if data_coverage is None:
-        return ["No data coverage diagnostics generated."]
-
-    lines = [
-        "| Category | Item | Status | Rows | Latest | Detail |",
-        "|---|---|---|---:|---|---|",
-    ]
-    for row in data_coverage.rows:
-        lines.append(
-            f"| {row.category} | {row.item} | {row.status} | "
-            f"{row.rows} | {row.latest} | {row.detail} |"
+        overall_status = (
+            "data_quality_failed"
+            if news_quality is not None
+            and news_quality.status == "data_quality_review"
+            else "unavailable"
         )
-    if data_coverage.impacts:
-        lines.extend(["", "Impact:"])
-        lines.extend(f"- {impact}" for impact in data_coverage.impacts)
+        lines = [
+            f"Overall: {overall_status}",
+            "",
+            "No data coverage diagnostics generated.",
+        ]
+    else:
+        overall_status = data_coverage.status
+        if news_quality is not None and news_quality.status == "data_quality_review":
+            overall_status = "data_quality_failed"
+        lines = [
+            f"Overall: {overall_status}",
+            "",
+            "| Category | Item | Status | Rows | Latest | Detail |",
+            "|---|---|---|---:|---|---|",
+        ]
+        for row in data_coverage.rows:
+            lines.append(
+                f"| {row.category} | {row.item} | {row.status} | "
+                f"{row.rows} | {row.latest} | {row.detail} |"
+            )
+        if data_coverage.impacts:
+            lines.extend(["", "Impact:"])
+            lines.extend(f"- {impact}" for impact in data_coverage.impacts)
+
+    if news_quality is not None:
+        precision = (
+            "N/A"
+            if news_quality.entity_precision is None
+            else f"{news_quality.entity_precision:.2%}"
+        )
+        lines.extend(
+            [
+                "",
+                "News quality gate:",
+                f"- Status: {news_quality.status}",
+                f"- Entity precision: {precision}",
+                f"- Precision threshold: {news_quality.precision_threshold:.2%}",
+                f"- news_score: {_format_nullable_score(news_quality.news_score)}",
+                f"- fundamental_score: {_format_nullable_score(news_quality.fundamental_score)}",
+                f"- portfolio_action: {news_quality.portfolio_action}",
+            ]
+        )
+        lines.extend(f"- Reason: {reason}" for reason in news_quality.reasons)
     return lines
 
 
@@ -223,12 +268,43 @@ def _render_portfolio_holdings(
     return lines
 
 
+def _render_fx_conversions(
+    fx_conversions: list[FxConversion],
+) -> list[str]:
+    if not fx_conversions:
+        return ["No FX conversions supplied."]
+
+    lines = [
+        "| Date | Account | Sold | Bought | Effective Rate | Fee |",
+        "|---|---|---:|---:|---:|---:|",
+    ]
+    for conversion in fx_conversions:
+        fee_currency = conversion.fee_currency or "—"
+        lines.append(
+            f"| {conversion.fx_date.isoformat()} | "
+            f"{_escape_cell(conversion.institution)} / "
+            f"{_escape_cell(conversion.account_label)} | "
+            f"{conversion.sold_currency} "
+            f"{_format_money_decimal(conversion.sold_amount)} | "
+            f"{conversion.bought_currency} "
+            f"{_format_money_decimal(conversion.bought_amount)} | "
+            f"{conversion.effective_rate:.4f} "
+            f"{conversion.sold_currency}/{conversion.bought_currency} | "
+            f"{fee_currency} {conversion.fee_amount:.2f} |"
+        )
+    return lines
+
+
 def _escape_cell(value: str) -> str:
     return value.replace("|", "\\|")
 
 
 def _format_decimal_compact(value: Decimal) -> str:
     return format(value, "f")
+
+
+def _format_money_decimal(value: Decimal) -> str:
+    return f"{value:.2f}"
 
 
 def _render_macro_context(macro_context: MacroContext | None) -> list[str]:
@@ -266,63 +342,19 @@ def _render_macro_context(macro_context: MacroContext | None) -> list[str]:
     return lines
 
 
-def _render_plan_impact(plan_impact: PlanImpact | None) -> list[str]:
-    if plan_impact is None:
-        return ["Deferred to Phase 5."]
-
-    lines = [
-        "Research support only. Not a buy/sell instruction.",
-        "",
-    ]
-    if not plan_impact.accumulation_review and not plan_impact.derisk_review:
-        lines.append("### No clear plan impact")
-        lines.append("")
-        if plan_impact.notes:
-            lines.extend(f"- {note}" for note in plan_impact.notes)
-        else:
-            lines.append("- No asset crossed accumulation or de-risk review thresholds.")
-        return lines
-
-    lines.extend(
-        _render_plan_impact_bucket(
-            "High-conviction accumulation review",
-            plan_impact.accumulation_review,
+def _render_strategy_rules(news_quality: NewsQualityGate | None) -> list[str]:
+    lines = ["Portfolio action: unavailable", ""]
+    if news_quality is not None and news_quality.status == "data_quality_review":
+        lines.append(
+            "- Data quality circuit breaker is active; news and fundamental scores are null."
         )
-    )
-    lines.append("")
-    lines.extend(
-        _render_plan_impact_bucket(
-            "High-conviction de-risk review",
-            plan_impact.derisk_review,
-        )
-    )
-    if plan_impact.notes:
-        lines.extend(["", "Notes:"])
-        lines.extend(f"- {note}" for note in plan_impact.notes)
+    lines.append("- No explicit strategy rule configuration is active.")
+    lines.append("- Market evidence is not converted into an automatic portfolio action.")
     return lines
 
 
-def _render_plan_impact_bucket(
-    title: str,
-    items: list[PlanImpactItem],
-) -> list[str]:
-    lines = [
-        f"### {title}",
-        "",
-    ]
-    if not items:
-        lines.append("No candidates.")
-        return lines
-
-    lines.extend(
-        [
-            "| Asset | Score | Evidence |",
-            "|---|---:|---|",
-        ]
-    )
-    for item in items:
-        lines.append(f"| {item.symbol} | {item.score} | {'; '.join(item.evidence)} |")
-    return lines
+def _format_nullable_score(value: float | None) -> str:
+    return "null" if value is None else f"{value:.2f}"
 
 
 def _render_company_price_bounds(

@@ -46,7 +46,7 @@ def macro(regime: str = "mixed", rates: str = "mixed", gold: str = "mixed") -> M
     )
 
 
-def test_plan_impact_identifies_accumulation_review_candidates():
+def test_plan_impact_does_not_add_news_to_price_context_score():
     result = analyze_plan_impact(
         price_signals={
             "QQQ": signal("QQQ", return_5d=0.04, return_20d=0.08),
@@ -67,11 +67,11 @@ def test_plan_impact_identifies_accumulation_review_candidates():
     )
 
     assert result.accumulation_review[0].symbol == "QQQ"
-    assert result.accumulation_review[0].score == 4
+    assert result.accumulation_review[0].score == 3
     assert "20D trend positive" in result.accumulation_review[0].evidence
     assert "5D momentum positive" in result.accumulation_review[0].evidence
     assert "macro regime supports broad risk assets" in result.accumulation_review[0].evidence
-    assert "important news cluster present" in result.accumulation_review[0].evidence
+    assert "important news cluster present" not in result.accumulation_review[0].evidence
     assert result.derisk_review == []
 
 
@@ -111,7 +111,7 @@ def test_plan_impact_stays_empty_when_evidence_is_weak():
     assert result.notes == ["No asset crossed accumulation or de-risk review thresholds."]
 
 
-def test_plan_impact_treats_regulatory_events_as_derisk_evidence():
+def test_plan_impact_does_not_turn_regulatory_news_into_automatic_derisk():
     result = analyze_plan_impact(
         price_signals={
             "AAPL": signal("AAPL", return_20d=-0.04),
@@ -131,5 +131,5 @@ def test_plan_impact_treats_regulatory_events_as_derisk_evidence():
         ],
     )
 
-    assert result.derisk_review[0].symbol == "AAPL"
-    assert "regulatory event requires de-risk review" in result.derisk_review[0].evidence
+    assert result.derisk_review == []
+    assert result.accumulation_review == []

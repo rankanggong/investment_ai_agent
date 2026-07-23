@@ -12,6 +12,9 @@ def item(title, url, symbol, publisher):
         published_at=datetime(2026, 6, 22, 3, 15, tzinfo=timezone.utc),
         related_symbol=symbol,
         source="google_news_rss",
+        entity_kind="etf",
+        entity_confidence=0.95,
+        entity_match_reason="test fixture",
     )
 
 

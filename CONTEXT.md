@@ -28,3 +28,33 @@ _Avoid_: Market value, purchase amount
 **State Snapshot Date**:
 The date on which a cash position or holding snapshot describes the owned state.
 _Avoid_: Transaction date, import date
+
+## Market Research Language
+
+**Asset Entity**:
+A uniquely identified ETF, company, index, or commodity to which evidence may be linked.
+_Avoid_: Search term, ticker mention
+
+**Query Symbol**:
+The symbol used to retrieve candidate news. It is collection provenance and is not evidence that an article concerns the asset entity.
+_Avoid_: Related asset
+
+**Entity Link**:
+An evidence-backed association between an article and an asset entity, with a confidence value and match reason.
+_Avoid_: Query result
+
+**Entity Precision**:
+The share of candidate articles that pass the configured entity-link confidence threshold.
+_Avoid_: News confidence
+
+**Asset Event**:
+One deduplicated real-world occurrence supported by one or more articles. ETF, company, index, and commodity events use separate schemas.
+_Avoid_: Article, headline
+
+**Data Quality Gate**:
+A fail-closed decision that makes news-derived scores null and portfolio action unavailable when entity precision is below threshold.
+_Avoid_: Warning
+
+**Portfolio Action**:
+The availability of an explicitly configured investment rule outcome. Market evidence alone is not a portfolio action.
+_Avoid_: High-conviction label, automatic de-risk instruction

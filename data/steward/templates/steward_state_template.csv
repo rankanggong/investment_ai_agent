@@ -1,0 +1,11 @@
+record_type,as_of_date,institution,account_label,currency,cash_balance,symbol,asset_name,quantity,unit_cost,acquired_on,fx_date,sold_currency,sold_amount,bought_currency,bought_amount,fee_currency,fee_amount,notes
+cash,2026-07-19,CMB,cmb_rmb,RMB,1200000,,,,,,,,,,,,,
+cash,2026-07-19,ICBC,icbc_usd,USD,1940,,,,,,,,,,,,,
+cash,2026-07-19,BOA,boa_usd,USD,9000,,,,,,,,,,,,,
+holding,2026-07-19,摩根上投,基金账户,RMB,,VOO,Vanguard S&P 500 ETF QDII,3880.59,1.6028,2026-07-01,,,,,,,,
+holding,2026-07-19,摩根上投,基金账户,RMB,,QQQ,NASDAQ ETF QDII,2977.30,1.6928,2026-07-01,,,,,,,,
+holding,2026-07-19,摩根上投,基金账户,USD,,QQQ,NASDAQ ETF QDII,32.56,1.8416,2026-07-01,,,,,,,,
+holding,2026-07-19,其他,基金账户,RMB,,VOO,Vanguard S&P 500 ETF,10.74,2.7933,2026-07-01,,,,,,,,
+holding,2026-07-19,其他,基金账户,RMB,,QQQ,NASDAQ ETF QDII,10000,1.501,2026-01-01,,,,,,,,
+holding,2026-07-19,其他,黄金账户,CNY,,XAU-GRAM,黄金（克）,5.6724,881.46110994,,,,,,,,,总成本 5000 CNY
+fx,2026-07-19,ICBC,icbc_usd,,,,,,,,2026-07-15,CNY,13587.6,USD,2000,CNY,0,

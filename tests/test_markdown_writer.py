@@ -9,13 +9,12 @@ from app.models.analysis import (
     DailySignalSummary,
     MacroContext,
     MacroEvidenceRow,
-    PlanImpact,
-    PlanImpactItem,
+    NewsQualityGate,
     PriceSignal,
     SectorRotation,
 )
 from app.outputs.markdown_writer import render_daily_report
-from app.steward.models import HoldingPosition
+from app.steward.models import FxConversion, HoldingPosition, PortfolioReportState
 
 
 def test_render_daily_report_includes_required_sections():
@@ -53,7 +52,7 @@ def test_render_daily_report_includes_required_sections():
     assert "stored news" not in content.lower()
 
 
-def test_render_daily_report_includes_portfolio_holdings():
+def test_render_daily_report_includes_holdings_and_fx_but_not_cash():
     content = render_daily_report(
         report_date=date(2026, 7, 21),
         price_signals={},
@@ -65,25 +64,45 @@ def test_render_daily_report_includes_portfolio_holdings():
             cyclical_vs_defensive="mixed",
             notes=[],
         ),
-        portfolio_holdings=[
-            HoldingPosition(
-                institution="broker",
-                account_label="fund",
-                symbol="QQQ",
-                name="NASDAQ ETF QDII",
-                quantity=Decimal("2977.30"),
-                currency="CNY",
-                unit_cost=Decimal("1.6928"),
-                as_of_date=date(2026, 7, 19),
-                acquired_on=date(2026, 7, 1),
-            )
-        ],
+        portfolio_state=PortfolioReportState(
+            holdings=[
+                HoldingPosition(
+                    institution="broker",
+                    account_label="fund",
+                    symbol="QQQ",
+                    name="NASDAQ ETF QDII",
+                    quantity=Decimal("2977.30"),
+                    currency="CNY",
+                    unit_cost=Decimal("1.6928"),
+                    as_of_date=date(2026, 7, 19),
+                    acquired_on=date(2026, 7, 1),
+                )
+            ],
+            fx_conversions=[
+                FxConversion(
+                    institution="bank",
+                    account_label="usd",
+                    fx_date=date(2026, 7, 15),
+                    sold_currency="CNY",
+                    sold_amount=Decimal("13587.60"),
+                    bought_currency="USD",
+                    bought_amount=Decimal("2000.00"),
+                    fee_currency="CNY",
+                    fee_amount=Decimal("0"),
+                )
+            ],
+        ),
     )
 
     assert "## Portfolio Holdings" in content
     assert (
         "| broker | fund | QQQ | NASDAQ ETF QDII | CNY | 2977.30 | "
         "1.6928 | 5039.97 | 2026-07-19 |" in content
+    )
+    assert "## FX Conversions" in content
+    assert (
+        "| 2026-07-15 | bank / usd | CNY 13587.60 | USD 2000.00 | "
+        "6.7938 CNY/USD | CNY 0.00 |" in content
     )
     assert "Cash Positions" not in content
 
@@ -146,8 +165,8 @@ def test_render_daily_report_includes_data_coverage_after_daily_signal_summary()
         ),
     )
 
-    assert content.index("## 0. What Matters Today") < content.index("## Data Coverage")
-    assert content.index("## Data Coverage") < content.index("## 1. Market Overview")
+    assert content.index("## 0. What Matters Today") < content.index("## Data Quality")
+    assert content.index("## Data Quality") < content.index("## 1. Market Overview")
     assert "| Category | Item | Status | Rows | Latest | Detail |" in content
     assert (
         "| Macro | UUP | missing | 0 | N/A | "
@@ -187,7 +206,7 @@ def test_render_daily_report_includes_macro_context_when_available():
     assert "- Long-duration proxies are firm." in content
 
 
-def test_render_daily_report_includes_plan_impact_review():
+def test_render_daily_report_fails_closed_without_action_labels():
     content = render_daily_report(
         report_date=date(2026, 5, 16),
         price_signals={},
@@ -199,38 +218,31 @@ def test_render_daily_report_includes_plan_impact_review():
             cyclical_vs_defensive="unknown",
             notes=[],
         ),
-        plan_impact=PlanImpact(
-            accumulation_review=[
-                PlanImpactItem(
-                    symbol="QQQ",
-                    score=4,
-                    evidence=[
-                        "20D trend positive",
-                        "macro regime supports broad risk assets",
-                    ],
-                )
-            ],
-            derisk_review=[
-                PlanImpactItem(
-                    symbol="TLT",
-                    score=-3,
-                    evidence=[
-                        "20D trend negative",
-                        "rates pressure weighs on duration assets",
-                    ],
-                )
-            ],
-            notes=[],
+        daily_signal_summary=DailySignalSummary(
+            status="data_quality_failed",
+            drivers=["News entity precision: 42.00% (threshold 80.00%)"],
+            reason="Data quality failed: entity precision is below threshold.",
+        ),
+        news_quality=NewsQualityGate(
+            entity_precision=0.42,
+            precision_threshold=0.80,
+            status="data_quality_review",
+            news_score=None,
+            fundamental_score=None,
+            portfolio_action="unavailable",
+            reasons=["Entity precision 42.00% is below threshold 80.00%."],
         ),
     )
 
-    assert "## 5. Impact On My Plan" in content
-    assert "Research support only. Not a buy/sell instruction." in content
-    assert "### High-conviction accumulation review" in content
-    assert "| QQQ | 4 | 20D trend positive; macro regime supports broad risk assets |" in content
-    assert "### High-conviction de-risk review" in content
-    assert "| TLT | -3 | 20D trend negative; rates pressure weighs on duration assets |" in content
-    assert "Deferred to Phase 5." not in content
+    assert "Status: data_quality_failed" in content
+    assert "Overall: data_quality_failed" in content
+    assert "## 5. Triggered Strategy Rules" in content
+    assert "- news_score: null" in content
+    assert "- fundamental_score: null" in content
+    assert "- portfolio_action: unavailable" in content
+    assert "Portfolio action: unavailable" in content
+    assert "High-conviction" not in content
+    assert "de-risk" not in content.lower()
 
 
 def test_render_daily_report_includes_detailed_macro_context():

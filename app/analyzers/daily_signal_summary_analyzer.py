@@ -1,6 +1,7 @@
 from app.models.analysis import (
     DailySignalSummary,
     MacroContext,
+    NewsQualityGate,
     PriceSignal,
     SectorRotation,
 )
@@ -12,6 +13,7 @@ def analyze_daily_signal_summary(
     price_signals: dict[str, PriceSignal],
     sector_rotation: SectorRotation,
     macro_context: MacroContext | None,
+    news_quality: NewsQualityGate | None = None,
 ) -> DailySignalSummary:
     unusual_count = sum(1 for signal in price_signals.values() if signal.is_unusual_move)
 
@@ -20,6 +22,22 @@ def analyze_daily_signal_summary(
         _sector_driver(sector_rotation),
         _macro_driver(macro_context),
     ]
+
+    if news_quality is not None and news_quality.status == "data_quality_review":
+        precision = (
+            "N/A"
+            if news_quality.entity_precision is None
+            else f"{news_quality.entity_precision:.2%}"
+        )
+        drivers.append(
+            "News entity precision: "
+            f"{precision} (threshold {news_quality.precision_threshold:.2%})"
+        )
+        return DailySignalSummary(
+            status="data_quality_failed",
+            drivers=drivers,
+            reason="Data quality failed: entity precision is below threshold.",
+        )
 
     review_reasons: list[str] = []
     if unusual_count:

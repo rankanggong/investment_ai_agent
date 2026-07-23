@@ -40,7 +40,10 @@ def analyze_data_coverage(
         for symbol in popular_company_symbols
     )
     impacts = _impacts(rows)
-    return DataCoverage(rows=rows, impacts=impacts)
+    overall_status = (
+        "degraded" if any(row.status != "available" for row in rows) else "available"
+    )
+    return DataCoverage(rows=rows, impacts=impacts, status=overall_status)
 
 
 def _price_row(
@@ -57,6 +60,8 @@ def _price_row(
     )
     row_count = len(bars)
     status = _status(row_count, min_rows)
+    if normalized_symbol == "USD/CNH" and row_count == 0:
+        status = "degraded"
     latest = bars[-1].date.isoformat() if bars else "N/A"
     if detail is None:
         detail = "Price history available." if row_count else "No price history available."
@@ -81,6 +86,17 @@ def _status(row_count: int, min_rows: int) -> str:
 
 def _impacts(rows: list[DataCoverageRow]) -> list[str]:
     impacts: list[str] = []
+
+    price_gaps = [
+        row.item
+        for row in rows
+        if row.category == "Prices" and row.status != "available"
+    ]
+    if price_gaps:
+        impacts.append(
+            "Price evidence is degraded because "
+            f"{_join_items(price_gaps)} have no usable price history."
+        )
 
     macro_gaps = [
         row.item
