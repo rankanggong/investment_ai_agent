@@ -20,7 +20,9 @@ def test_cli_exposes_phase_1_commands():
     live_args = parser.parse_args(["collect", "prices", "--yfinance"])
     assert live_args.yfinance is True
     assert live_args.symbols is None
-    assert parser.parse_args(["report", "daily"]).report_command == "daily"
+    daily_args = parser.parse_args(["report", "daily"])
+    assert daily_args.report_command == "daily"
+    assert daily_args.steward_db == app.main.DEFAULT_STEWARD_DB_PATH
 
 
 def test_cli_does_not_expose_news_collection():

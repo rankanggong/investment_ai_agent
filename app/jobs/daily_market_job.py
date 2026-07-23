@@ -11,6 +11,7 @@ from app.analyzers.report_signal_analyzer import analyze_report_signals
 from app.analyzers.sector_rotation_analyzer import analyze_sector_rotation
 from app.config import load_watchlist
 from app.outputs.markdown_writer import render_daily_report, write_daily_report
+from app.steward.storage import StewardRepository, initialize_steward_database
 from app.storage.repositories.price_repo import PriceRepository
 from app.storage.repositories.report_repo import ReportRepository
 
@@ -20,6 +21,7 @@ def generate_daily_report(
     watchlist_path: Path,
     report_dir: Path,
     report_date: date | None = None,
+    steward_db_path: Path | None = None,
 ) -> Path:
     watchlist = load_watchlist(watchlist_path)
     repo = PriceRepository(db_path)
@@ -61,6 +63,10 @@ def generate_daily_report(
         fundamental_events=[],
         data_coverage=data_coverage,
     )
+    portfolio_holdings = None
+    if steward_db_path is not None:
+        initialize_steward_database(steward_db_path)
+        portfolio_holdings = StewardRepository(steward_db_path).load_state().holdings
     effective_date = report_date or _latest_report_date(history) or date.today()
     content = render_daily_report(
         report_date=effective_date,
@@ -72,6 +78,7 @@ def generate_daily_report(
         plan_impact=plan_impact,
         company_price_bounds=company_price_bounds,
         report_signals=report_signals,
+        portfolio_holdings=portfolio_holdings,
     )
     path = write_daily_report(report_dir, effective_date, content)
     ReportRepository(db_path).insert_report(

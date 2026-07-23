@@ -50,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     daily.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
     daily.add_argument("--watchlist", type=Path, default=DEFAULT_WATCHLIST_PATH)
     daily.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
+    daily.add_argument("--steward-db", type=Path, default=DEFAULT_STEWARD_DB_PATH)
 
     steward = subparsers.add_parser(
         "steward",
@@ -129,7 +130,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "report" and args.report_command == "daily":
         initialize_database(args.db)
-        path = generate_daily_report(args.db, args.watchlist, args.report_dir)
+        path = generate_daily_report(
+            args.db,
+            args.watchlist,
+            args.report_dir,
+            steward_db_path=args.steward_db,
+        )
         print(f"Wrote daily report to {path}")
         return 0
 

@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 
 from app.models.analysis import (
     CompanyPriceBound,
@@ -14,6 +15,7 @@ from app.models.analysis import (
     SectorRotation,
 )
 from app.outputs.markdown_writer import render_daily_report
+from app.steward.models import HoldingPosition
 
 
 def test_render_daily_report_includes_required_sections():
@@ -49,6 +51,41 @@ def test_render_daily_report_includes_required_sections():
     assert "Fundamental Events" not in content
     assert "What To Read Manually" not in content
     assert "stored news" not in content.lower()
+
+
+def test_render_daily_report_includes_portfolio_holdings():
+    content = render_daily_report(
+        report_date=date(2026, 7, 21),
+        price_signals={},
+        sector_rotation=SectorRotation(
+            strong_sectors=[],
+            weak_sectors=[],
+            risk_on_score=0.0,
+            growth_vs_value="mixed",
+            cyclical_vs_defensive="mixed",
+            notes=[],
+        ),
+        portfolio_holdings=[
+            HoldingPosition(
+                institution="broker",
+                account_label="fund",
+                symbol="QQQ",
+                name="NASDAQ ETF QDII",
+                quantity=Decimal("2977.30"),
+                currency="CNY",
+                unit_cost=Decimal("1.6928"),
+                as_of_date=date(2026, 7, 19),
+                acquired_on=date(2026, 7, 1),
+            )
+        ],
+    )
+
+    assert "## Portfolio Holdings" in content
+    assert (
+        "| broker | fund | QQQ | NASDAQ ETF QDII | CNY | 2977.30 | "
+        "1.6928 | 5039.97 | 2026-07-19 |" in content
+    )
+    assert "Cash Positions" not in content
 
 
 def test_render_daily_report_includes_daily_signal_summary_before_market_overview():

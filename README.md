@@ -28,6 +28,11 @@ python -m app.main collect prices --yfinance
 python -m app.main report daily
 ```
 
+The daily market report reads holding snapshots from the steward database and
+includes them in `Portfolio Holdings`. Cash positions and FX conversions are
+not included in the daily market report. Use `--steward-db` to select a
+non-default steward database.
+
 CSV imports require these columns:
 
 ```text

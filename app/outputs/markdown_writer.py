@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 from app.models.analysis import (
@@ -12,6 +13,7 @@ from app.models.analysis import (
     ReportSignals,
     SectorRotation,
 )
+from app.steward.models import HoldingPosition
 
 
 def render_daily_report(
@@ -24,6 +26,7 @@ def render_daily_report(
     plan_impact: PlanImpact | None = None,
     company_price_bounds: CompanyPriceBounds | None = None,
     report_signals: ReportSignals | None = None,
+    portfolio_holdings: list[HoldingPosition] | None = None,
 ) -> str:
     lines = [
         f"# Daily Market Brief - {report_date.isoformat()}",
@@ -43,6 +46,15 @@ def render_daily_report(
         ]
     )
     lines.extend(_render_data_coverage(data_coverage))
+    if portfolio_holdings is not None:
+        lines.extend(
+            [
+                "",
+                "## Portfolio Holdings",
+                "",
+            ]
+        )
+        lines.extend(_render_portfolio_holdings(portfolio_holdings))
     lines.extend(
         [
             "",
@@ -187,6 +199,36 @@ def _render_data_coverage(data_coverage: DataCoverage | None) -> list[str]:
         lines.extend(["", "Impact:"])
         lines.extend(f"- {impact}" for impact in data_coverage.impacts)
     return lines
+
+
+def _render_portfolio_holdings(
+    portfolio_holdings: list[HoldingPosition],
+) -> list[str]:
+    if not portfolio_holdings:
+        return ["No portfolio holdings supplied."]
+
+    lines = [
+        "| Institution | Account | Symbol | Name | Currency | Quantity | Unit Cost | Total Cost | As Of |",
+        "|---|---|---|---|---|---:|---:|---:|---|",
+    ]
+    for holding in portfolio_holdings:
+        lines.append(
+            f"| {_escape_cell(holding.institution)} | "
+            f"{_escape_cell(holding.account_label)} | "
+            f"{_escape_cell(holding.symbol)} | {_escape_cell(holding.name)} | "
+            f"{holding.currency} | {_format_decimal_compact(holding.quantity)} | "
+            f"{_format_decimal_compact(holding.unit_cost)} | "
+            f"{holding.total_cost:.2f} | {holding.as_of_date.isoformat()} |"
+        )
+    return lines
+
+
+def _escape_cell(value: str) -> str:
+    return value.replace("|", "\\|")
+
+
+def _format_decimal_compact(value: Decimal) -> str:
+    return format(value, "f")
 
 
 def _render_macro_context(macro_context: MacroContext | None) -> list[str]:
