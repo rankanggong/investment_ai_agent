@@ -21,7 +21,12 @@ def test_load_watchlist_expands_grouped_assets():
     assert watchlist.asset_by_symbol("AAPL").role == "popular_company"
     assert watchlist.asset_by_symbol("AAPL").group == "popular_companies"
     assert "MSFT" in watchlist.symbols_for_group("popular_companies")
-    assert watchlist.symbols_for_group("macro_actual") == ["^TNX", "DX-Y.NYB"]
+    assert watchlist.symbols_for_group("macro_actual") == [
+        "^TNX",
+        "DX-Y.NYB",
+        "^VIX",
+    ]
+    assert watchlist.symbols_for_group("breadth") == ["RSP"]
 
 
 def test_load_report_profile_reads_targets_budgets_and_questions(tmp_path):

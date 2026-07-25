@@ -6,6 +6,9 @@ from app.models.analysis import (
     CompanyPriceBounds,
     DataCoverage,
     DailySignalSummary,
+    FxCostComparison,
+    GptAnalysisTask,
+    MarketBreadth,
     MarketEvidence,
     MacroContext,
     NewsQualityGate,
@@ -39,10 +42,14 @@ def render_daily_report(
     news_quality: NewsQualityGate | None = None,
     portfolio_summary: PortfolioSummary | None = None,
     risk_assessment: RiskAssessment | None = None,
+    portfolio_risk: RiskAssessment | None = None,
+    market_breadth: MarketBreadth | None = None,
+    fx_costs: list[FxCostComparison] | None = None,
     key_evidence: list[MarketEvidence] | None = None,
     strategy_rules: list[StrategyRuleResult] | None = None,
     changes: list[str] | None = None,
     gpt_questions: list[str] | None = None,
+    gpt_tasks: list[GptAnalysisTask] | None = None,
     report_state: ReportState | None = None,
     price_sources: dict[str, str] | None = None,
 ) -> str:
@@ -53,6 +60,12 @@ def render_daily_report(
     )
     effective_evidence = key_evidence or []
     effective_rules = strategy_rules or []
+    effective_portfolio_risk = portfolio_risk or RiskAssessment(
+        score=0,
+        level="unknown",
+        explanations=["Portfolio risk assessment was not generated."],
+        scope="portfolio",
+    )
     lines = [
         f"# Daily Market State - {report_date.isoformat()}",
         "",
@@ -64,6 +77,7 @@ def render_daily_report(
             daily_signal_summary,
             macro_context,
             effective_risk,
+            effective_portfolio_risk,
         ),
         "",
         "## 1. Data Quality",
@@ -94,6 +108,8 @@ def render_daily_report(
         ]
     )
     lines.extend(_render_key_evidence(effective_evidence))
+    lines.extend(["", "Market Breadth:"])
+    lines.extend(_render_market_breadth(market_breadth))
     lines.extend(
         [
             "",
@@ -102,8 +118,16 @@ def render_daily_report(
         ]
     )
     lines.extend(_render_triggered_rules(effective_rules))
-    lines.extend(["", f"Risk score: {effective_risk.score}/100 ({effective_risk.level})"])
+    lines.extend(["", f"Market risk: {effective_risk.score}/100 ({effective_risk.level})"])
     lines.extend(f"- {reason}" for reason in effective_risk.explanations)
+    lines.extend(
+        [
+            "",
+            f"Portfolio risk: {effective_portfolio_risk.score}/100 "
+            f"({effective_portfolio_risk.level})",
+        ]
+    )
+    lines.extend(f"- {reason}" for reason in effective_portfolio_risk.explanations)
     lines.extend(
         [
             "",
@@ -111,8 +135,11 @@ def render_daily_report(
             "",
         ]
     )
-    questions = gpt_questions or ["No GPT analysis task was generated."]
-    lines.extend(f"{index}. {question}" for index, question in enumerate(questions, 1))
+    if gpt_tasks:
+        lines.extend(_render_gpt_tasks(gpt_tasks))
+    else:
+        questions = gpt_questions or ["No GPT analysis task was generated."]
+        lines.extend(f"{index}. {question}" for index, question in enumerate(questions, 1))
     lines.extend(
         [
             "",
@@ -133,6 +160,8 @@ def render_daily_report(
         lines.extend(_render_portfolio_holdings(portfolio_state.holdings))
         lines.extend(["", "#### FX Conversions", ""])
         lines.extend(_render_fx_conversions(portfolio_state.fx_conversions))
+        lines.extend(["", "#### FX Cost vs Spot", ""])
+        lines.extend(_render_fx_costs(fx_costs or []))
     lines.extend(["", "### C. Company Price Bounds", ""])
     lines.extend(_render_company_price_bounds(company_price_bounds))
     lines.extend(["", "### D. Macro Evidence and Raw Sources", ""])
@@ -156,6 +185,7 @@ def _executive_sentence(
     summary: DailySignalSummary | None,
     macro_context: MacroContext | None,
     risk: RiskAssessment,
+    portfolio_risk: RiskAssessment,
 ) -> str:
     status = summary.status if summary is not None else "not_available"
     regime = (
@@ -165,7 +195,8 @@ def _executive_sentence(
     )
     return (
         f"Market state is {status}; macro regime is {regime}; "
-        f"deterministic risk is {risk.score}/100 ({risk.level})."
+        f"market risk is {risk.score}/100 ({risk.level}); portfolio risk is "
+        f"{portfolio_risk.score}/100 ({portfolio_risk.level})."
     )
 
 
@@ -174,6 +205,8 @@ def _render_data_quality_issues(
     news_quality: NewsQualityGate | None,
 ) -> list[str]:
     lines = [
+        f"Overall: {data_coverage.status if data_coverage else 'blocked'}",
+        "",
         "| Module | Item | Status | Latest | Detail |",
         "|---|---|---|---|---|",
     ]
@@ -195,7 +228,7 @@ def _render_data_quality_issues(
     if news_quality is not None and news_quality.status in {
         "disabled",
         "data_quality_review",
-    }:
+    } and not any(row.category == "News" for row in (data_coverage.rows if data_coverage else [])):
         detail = "; ".join(news_quality.reasons) or "No detail supplied."
         lines.append(
             f"| News | entity pipeline | blocked | N/A | {_escape_cell(detail)} |"
@@ -203,13 +236,13 @@ def _render_data_quality_issues(
         issue_count += 1
     if issue_count == 0:
         return ["No missing, stale, insufficient, or blocked modules."]
-    if data_coverage is not None and data_coverage.impacts:
+    impacts = [
+        impact for impact in (data_coverage.impacts if data_coverage else [])
+        if "No data coverage gaps" not in impact
+    ]
+    if impacts:
         lines.extend(["", "Impact:"])
-        lines.extend(
-            f"- {impact}"
-            for impact in data_coverage.impacts
-            if "No data coverage gaps" not in impact
-        )
+        lines.extend(f"- {impact}" for impact in impacts)
     return lines
 
 
@@ -220,6 +253,8 @@ def _render_portfolio_summary(
         return ["Portfolio summary was not generated."]
     lines = [
         f"Aggregation basis: supplied holding cost in {summary.base_currency}.",
+        "Current Allocation is within invested holdings only; it is not total "
+        "liquid-asset allocation.",
         "",
         f"Total holding cost: {_format_money(summary.total_holding_cost, summary.base_currency)}",
         "",
@@ -246,6 +281,14 @@ def _render_portfolio_summary(
             "",
             f"USD cash: USD {summary.usd_cash:.2f}",
             "",
+            f"Investable Cash: {_format_money(summary.investable_cash, summary.base_currency)}",
+            "",
+            f"Reserved Cash: {_format_money(summary.reserved_cash, summary.base_currency)}",
+            "",
+            f"Unclassified Cash: {_format_money(summary.unclassified_cash, summary.base_currency)}",
+            "",
+            f"Portfolio snapshot status: {summary.snapshot_status}",
+            "",
             f"USD daily spend: {_format_money(summary.usd_daily_spend, 'USD')}",
             "",
             (
@@ -265,14 +308,19 @@ def _render_key_evidence(evidence: list[MarketEvidence]) -> list[str]:
     if not evidence:
         return ["No key market evidence available."]
     lines = [
-        "| Asset / Macro | Latest | 1D | 5D | 20D | Structural Trend | Short-Term State | Detection Reason |",
-        "|---|---:|---:|---:|---:|---|---|---|",
+        "| Ref | Asset / Macro | Latest | 1D | 5D | 20D | Medium-Term Trend | 50D | 200D | Drawdown | z-score | ATR | Percentile | Short-Term State | Detection Reason |",
+        "|---|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---|---|",
     ]
     for row in evidence:
         lines.append(
-            f"| {row.symbol} | {_format_decimal_or_na(row.latest)} | "
+            f"| {row.evidence_ref} | {row.symbol} | {_format_decimal_or_na(row.latest)} | "
             f"{_format_percent(row.return_1d)} | {_format_percent(row.return_5d)} | "
-            f"{_format_percent(row.return_20d)} | {row.structural_trend} | "
+            f"{_format_percent(row.return_20d)} | {row.medium_term_trend} | "
+            f"{_format_decimal_or_na(row.sma_50)} | {_format_decimal_or_na(row.sma_200)} | "
+            f"{_format_percent(row.drawdown_from_high)} | "
+            f"{_format_decimal_or_na(row.return_zscore)} | "
+            f"{_format_multiple(row.atr_multiple)} | "
+            f"{_format_percent(row.historical_percentile)} | "
             f"{row.short_term_state} | {_escape_cell(row.detection_reason)} |"
         )
     return lines
@@ -284,13 +332,73 @@ def _render_triggered_rules(
     if not rules:
         return ["No strategy rule is triggered or near its threshold."]
     lines = [
-        "| Rule | Status | Observed | Threshold | Detection Reason |",
-        "|---|---|---|---|---|",
+        "| Rule | Status | Observed | Threshold | z-score | ATR | Percentile | Evidence Refs | Detection Reason |",
+        "|---|---|---|---|---:|---:|---:|---|---|",
     ]
     for rule in rules:
         lines.append(
             f"| {rule.name} | {rule.status} | {_escape_cell(rule.observed)} | "
-            f"{_escape_cell(rule.threshold)} | {_escape_cell(rule.reason)} |"
+            f"{_escape_cell(rule.threshold)} | "
+            f"{_format_decimal_or_na(rule.return_zscore)} | "
+            f"{_format_multiple(rule.atr_multiple)} | "
+            f"{_format_percent(rule.historical_percentile)} | "
+            f"{_escape_cell(', '.join(rule.evidence_refs) or 'N/A')} | "
+            f"{_escape_cell(rule.reason)} |"
+        )
+    return lines
+
+
+def _render_market_breadth(breadth: MarketBreadth | None) -> list[str]:
+    if breadth is None:
+        return ["- Not generated."]
+    return [
+        f"- Tracked universe: {breadth.tracked_count} assets.",
+        f"- Above 50D: {breadth.above_50d_count} "
+        f"({_format_percent(breadth.above_50d_share)} of eligible assets).",
+        f"- Above 200D: {breadth.above_200d_count} "
+        f"({_format_percent(breadth.above_200d_share)} of eligible assets).",
+        f"- RSP vs SPY 20D: {_format_percent(breadth.rsp_vs_spy_20d)}.",
+        f"- VIX: {_format_decimal_or_na(breadth.vix_level)}; "
+        f"level percentile {_format_percent(breadth.vix_percentile)}.",
+        "- Breadth covers the configured tracked universe, not the full NYSE/Nasdaq.",
+    ]
+
+
+def _render_gpt_tasks(tasks: list[GptAnalysisTask]) -> list[str]:
+    lines: list[str] = []
+    for index, task in enumerate(tasks, 1):
+        lines.extend(
+            [
+                f"### Task {index}",
+                "",
+                f"Question: {task.question}",
+                "",
+                "Evidence Refs: "
+                + (", ".join(task.evidence_refs) if task.evidence_refs else "N/A"),
+                "",
+                f"Expected Output: {task.expected_output}",
+                "",
+                f"Confidence Requirement: {task.confidence_requirement}",
+                "",
+            ]
+        )
+    return lines
+
+
+def _render_fx_costs(costs: list[FxCostComparison]) -> list[str]:
+    if not costs:
+        return ["No comparable CNY/USD FX conversions."]
+    lines = [
+        "| Date | Pair | Effective | All-In | USD/CNH Spot | Spot Premium | Benchmark |",
+        "|---|---|---:|---:|---:|---:|---|",
+    ]
+    for item in costs:
+        lines.append(
+            f"| {item.fx_date.isoformat()} | {item.pair} | "
+            f"{item.effective_rate:.4f} | {item.all_in_rate:.4f} | "
+            f"{_format_decimal_or_na(item.spot_rate)} | "
+            f"{_format_percent(item.spot_premium)} | "
+            f"{_escape_cell(item.benchmark_note)} |"
         )
     return lines
 
@@ -299,11 +407,11 @@ def _render_full_price_evidence(
     price_signals: dict[str, PriceSignal],
 ) -> list[str]:
     lines = [
-        "| Asset | Latest | Latest Date | 1D | 5D | 20D | Detection Reason |",
-        "|---|---:|---|---:|---:|---:|---|",
+        "| Asset | Latest | Latest Date | 1D | 5D | 20D | 50D | 200D | Drawdown | z-score | ATR | Percentile | Detection Reason |",
+        "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     if not price_signals:
-        lines.append("| None | N/A | N/A | N/A | N/A | N/A | No price signals. |")
+        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | No price signals. |")
         return lines
     for symbol in sorted(price_signals):
         signal = price_signals[symbol]
@@ -313,6 +421,12 @@ def _render_full_price_evidence(
             f"{_format_percent(signal.return_1d)} | "
             f"{_format_percent(signal.return_5d)} | "
             f"{_format_percent(signal.return_20d)} | "
+            f"{_format_decimal_or_na(signal.sma_50)} | "
+            f"{_format_decimal_or_na(signal.sma_200)} | "
+            f"{_format_percent(signal.drawdown_from_high)} | "
+            f"{_format_decimal_or_na(signal.return_zscore_60d)} | "
+            f"{_format_multiple(signal.atr_multiple)} | "
+            f"{_format_percent(signal.historical_percentile)} | "
             f"{_escape_cell(signal.reason or 'No detector threshold crossed.')} |"
         )
     return lines
@@ -322,14 +436,14 @@ def _render_cash_positions(cash_positions: list[CashPosition]) -> list[str]:
     if not cash_positions:
         return ["No cash positions supplied."]
     lines = [
-        "| Institution | Account | Currency | Balance | As Of |",
-        "|---|---|---|---:|---|",
+        "| Institution | Account | Currency | Balance | Cash Role | As Of |",
+        "|---|---|---|---:|---|---|",
     ]
     for position in cash_positions:
         lines.append(
             f"| {_escape_cell(position.institution)} | "
             f"{_escape_cell(position.account_label)} | {position.currency} | "
-            f"{_format_decimal_compact(position.balance)} | "
+            f"{_format_decimal_compact(position.balance)} | {position.cash_role} | "
             f"{position.as_of_date.isoformat()} |"
         )
     return lines
@@ -346,6 +460,10 @@ def _render_raw_sources(price_sources: dict[str, str]) -> list[str]:
 
 def _format_decimal_or_na(value: float | None) -> str:
     return "N/A" if value is None else f"{value:.2f}"
+
+
+def _format_multiple(value: float | None) -> str:
+    return "N/A" if value is None else f"{value:.2f}x"
 
 
 def _format_money(value: float | None, currency: str) -> str:

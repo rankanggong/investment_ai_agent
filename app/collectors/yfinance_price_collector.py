@@ -19,7 +19,7 @@ class YFinanceCollectionResult:
 
 def collect_yfinance_prices(
     symbols: Iterable[str],
-    period: str = "6mo",
+    period: str = "1y",
     history_loader: HistoryLoader | None = None,
 ) -> YFinanceCollectionResult:
     loader = history_loader or _load_history

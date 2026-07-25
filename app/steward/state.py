@@ -18,6 +18,7 @@ _REQUIRED_COLUMNS = {
     "account_label",
     "currency",
     "cash_balance",
+    "cash_role",
     "symbol",
     "asset_name",
     "quantity",
@@ -82,7 +83,20 @@ def read_steward_state_csv(csv_path: Path) -> StewardState:
 
 
 def _parse_cash(row: dict[str, str]) -> CashPosition:
-    _require(row, "as_of_date", "institution", "account_label", "currency", "cash_balance")
+    _require(
+        row,
+        "as_of_date",
+        "institution",
+        "account_label",
+        "currency",
+        "cash_balance",
+        "cash_role",
+    )
+    cash_role = row["cash_role"].casefold()
+    if cash_role not in {"investable", "reserved", "unclassified"}:
+        raise ValueError(
+            "cash_role must be investable, reserved, or unclassified"
+        )
     return CashPosition(
         institution=row["institution"],
         account_label=row["account_label"],
@@ -90,6 +104,7 @@ def _parse_cash(row: dict[str, str]) -> CashPosition:
         balance=_decimal(row["cash_balance"], "cash_balance"),
         as_of_date=_date(row["as_of_date"], "as_of_date"),
         notes=row["notes"],
+        cash_role=cash_role,
     )
 
 

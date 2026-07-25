@@ -5,3 +5,4 @@ __pycache__/
 .venv/
 data/**/*.db
 data/reports/*.md
+data/steward/steward_state.csv

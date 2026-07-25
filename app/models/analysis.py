@@ -15,6 +15,15 @@ class PriceSignal:
     reason: str
     latest: float | None = None
     latest_date: date | None = None
+    sma_50: float | None = None
+    sma_200: float | None = None
+    distance_to_50d: float | None = None
+    distance_to_200d: float | None = None
+    drawdown_from_high: float | None = None
+    atr_20: float | None = None
+    atr_multiple: float | None = None
+    return_zscore_60d: float | None = None
+    historical_percentile: float | None = None
 
 
 @dataclass(frozen=True)
@@ -170,6 +179,10 @@ class PortfolioSummary:
     usd_cash: float
     usd_daily_spend: float | None
     usd_coverage_days: float | None
+    investable_cash: float | None = None
+    reserved_cash: float | None = None
+    unclassified_cash: float | None = None
+    snapshot_status: str = "unavailable"
     notes: list[str] = field(default_factory=list)
 
 
@@ -178,6 +191,17 @@ class RiskAssessment:
     score: int
     level: str
     explanations: list[str]
+    scope: str = "market"
+    clusters: list["RiskClusterAssessment"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RiskClusterAssessment:
+    cluster: str
+    symbols: tuple[str, ...]
+    severity: float
+    points: int
+    evidence_refs: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -187,9 +211,16 @@ class MarketEvidence:
     return_1d: float | None
     return_5d: float | None
     return_20d: float | None
-    structural_trend: str
+    medium_term_trend: str
     short_term_state: str
     detection_reason: str
+    return_zscore: float | None = None
+    atr_multiple: float | None = None
+    historical_percentile: float | None = None
+    sma_50: float | None = None
+    sma_200: float | None = None
+    drawdown_from_high: float | None = None
+    evidence_ref: str = ""
 
 
 @dataclass(frozen=True)
@@ -199,6 +230,41 @@ class StrategyRuleResult:
     observed: str
     threshold: str
     reason: str
+    return_zscore: float | None = None
+    atr_multiple: float | None = None
+    historical_percentile: float | None = None
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class MarketBreadth:
+    tracked_count: int
+    above_50d_count: int
+    above_200d_count: int
+    above_50d_share: float | None
+    above_200d_share: float | None
+    rsp_vs_spy_20d: float | None
+    vix_level: float | None
+    vix_percentile: float | None
+
+
+@dataclass(frozen=True)
+class FxCostComparison:
+    fx_date: date
+    pair: str
+    effective_rate: float
+    all_in_rate: float
+    spot_rate: float | None
+    spot_premium: float | None
+    benchmark_note: str
+
+
+@dataclass(frozen=True)
+class GptAnalysisTask:
+    question: str
+    evidence_refs: tuple[str, ...]
+    expected_output: str
+    confidence_requirement: str
 
 
 @dataclass(frozen=True)
@@ -206,10 +272,12 @@ class ReportState:
     executive_status: str
     data_quality_status: str
     macro_regime: str
-    risk_score: int
-    risk_level: str
+    market_risk_score: int
+    market_risk_level: str
+    portfolio_risk_score: int
+    portfolio_risk_level: str
     triggered_rules: tuple[str, ...]
-    structural_trends: tuple[str, ...]
+    medium_term_trends: tuple[str, ...]
     portfolio_gaps: tuple[str, ...]
 
 

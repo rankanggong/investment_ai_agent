@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import date, time
 from decimal import Decimal
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ class CashPosition:
     balance: Decimal
     as_of_date: date
     notes: str = ""
+    cash_role: Literal["investable", "reserved", "unclassified"] = "unclassified"
 
 
 @dataclass(frozen=True)

@@ -149,6 +149,7 @@ def test_portfolio_summary_and_account_details_are_separated():
                 currency="USD",
                 balance=Decimal("9000"),
                 as_of_date=date(2026, 7, 19),
+                cash_role="investable",
             )
         ],
     )
@@ -176,7 +177,7 @@ def test_portfolio_summary_and_account_details_are_separated():
     assert "Daily investment budget: CNY 500.00" in content
     assert "USD coverage days: 180.0" in content
     assert "### B. Account Detail" in content
-    assert "| bank | usd | USD | 9000 | 2026-07-19 |" in content
+    assert "| bank | usd | USD | 9000 | investable | 2026-07-19 |" in content
 
 
 def test_key_evidence_separates_structure_from_short_term_and_explains_risk():
@@ -191,14 +192,14 @@ def test_key_evidence_separates_structure_from_short_term_and_explains_risk():
                 return_1d=0.01,
                 return_5d=0.03,
                 return_20d=-0.08,
-                structural_trend="structural_downtrend",
+                medium_term_trend="medium_term_downtrend",
                 short_term_state="countertrend_rebound",
                 detection_reason="5D rebound opposes 20D trend",
             )
         ],
         strategy_rules=[
             StrategyRuleResult(
-                name="Structural/short-term divergence",
+                name="Medium-term/short-term divergence",
                 status="triggered",
                 observed="QQQ",
                 threshold="5D opposes 20D",
@@ -213,9 +214,9 @@ def test_key_evidence_separates_structure_from_short_term_and_explains_risk():
         gpt_questions=["What confirms the rebound?"],
     )
 
-    assert "structural_downtrend | countertrend_rebound" in content
-    assert "| Structural/short-term divergence | triggered | QQQ |" in content
-    assert "Risk score: 45/100 (elevated)" in content
+    assert "medium_term_downtrend" in content
+    assert "| Medium-term/short-term divergence | triggered | QQQ |" in content
+    assert "Market risk: 45/100 (elevated)" in content
     assert "- Data-quality penalty: 20 points." in content
     assert "1. What confirms the rebound?" in content
 

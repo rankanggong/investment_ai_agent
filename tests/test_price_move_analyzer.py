@@ -32,3 +32,23 @@ def test_analyze_price_moves_calculates_returns_and_flags_unusual_move():
     assert signal.is_unusual_move is True
     assert signal.latest == 108
     assert signal.latest_date == date(2026, 1, 22)
+
+
+def test_analyze_price_moves_calculates_long_horizon_and_standardized_metrics():
+    prices = [make_bar(i, 100 + i * 0.2) for i in range(219)]
+    prices.append(make_bar(219, 160, volume=4000))
+
+    signal = analyze_price_moves({"GLD": prices})["GLD"]
+
+    assert signal.sma_50 is not None
+    assert signal.sma_200 is not None
+    assert signal.distance_to_50d is not None
+    assert signal.distance_to_200d is not None
+    assert signal.drawdown_from_high == 0
+    assert signal.atr_20 is not None
+    assert signal.atr_multiple is not None
+    assert signal.return_zscore_60d is not None
+    assert signal.historical_percentile is not None
+    assert "z-score" in signal.reason
+    assert "ATR" in signal.reason
+    assert "percentile" in signal.reason

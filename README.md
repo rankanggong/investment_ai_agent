@@ -50,7 +50,7 @@ CSV imports require these columns:
 symbol,date,open,high,low,close,adjusted_close,volume
 ```
 
-Live collection fetches six months of daily history for every asset in
+Live collection fetches one year of daily history for every asset in
 `config/watchlist.yaml`. To collect only selected symbols:
 
 ```bash
@@ -72,10 +72,14 @@ The daily report contains:
 - cost-based portfolio aggregation, configured target gaps, daily budget, and
   USD coverage days;
 - state changes since the previous comparable report;
-- at most ten key market/macro evidence rows, separating 20-day structure from
-  5-day countertrend movement;
-- triggered or near-threshold deterministic rules with an explained risk score;
-- GPT analysis questions; and
+- at most ten key market/macro evidence rows, separating 50D/200D medium-term
+  trend from 5-day movement and showing drawdown from the 252-day high;
+- triggered or near-threshold deterministic rules with 60D return-magnitude
+  z-score, 20D ATR multiple, and 252D historical percentile;
+- separate market-cluster and portfolio risk scores, tracked-universe breadth,
+  VIX, and RSP-versus-SPY evidence;
+- GPT analysis questions with evidence references and expected-output contracts;
+  and
 - an appendix with full price evidence, account detail, technical bounds, macro
   evidence, and raw price sources.
 
@@ -85,7 +89,9 @@ The generated report is research support only. It does not provide trading advic
 
 The steward reads one authoritative CSV containing current cash positions,
 holding snapshots, and FX conversions. It does not require detailed bank
-transactions or PDF statement parsing:
+transactions or PDF statement parsing. Each cash position must explicitly use
+`investable`, `reserved`, or `unclassified` as its `cash_role`; the report never
+infers deployability from the account or currency:
 
 ```bash
 python -m app.main steward init-db
@@ -96,14 +102,14 @@ python -m app.main steward report
 
 Each row uses `record_type` to select its contract:
 
-- `cash`: account balance and snapshot date.
+- `cash`: account balance, snapshot date, and explicit cash role.
 - `holding`: asset quantity, unit cost, currency, and snapshot date.
 - `fx`: sold/bought currencies and amounts, conversion date, and fee.
 
 The CSV must contain these columns:
 
 ```text
-record_type,as_of_date,institution,account_label,currency,cash_balance,
+record_type,as_of_date,institution,account_label,currency,cash_balance,cash_role,
 symbol,asset_name,quantity,unit_cost,acquired_on,fx_date,sold_currency,
 sold_amount,bought_currency,bought_amount,fee_currency,fee_amount,notes
 ```
@@ -111,6 +117,8 @@ sold_amount,bought_currency,bought_amount,fee_currency,fee_amount,notes
 Dates use `YYYY-MM-DD`; numbers use a decimal point without thousands
 separators. `RMB` and `人民币` are normalized to `CNY`. The import is atomic and
 replaces the prior steward state only after every populated row validates.
+Cash rows require `cash_role` set to `investable`, `reserved`, or
+`unclassified`; the agent never infers cash availability from an account name.
 
 ## Amazon Bedrock
 

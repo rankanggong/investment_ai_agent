@@ -37,7 +37,7 @@ def test_collect_yfinance_prices_normalizes_history_rows():
 
     result = collect_yfinance_prices(["spy"], history_loader=load_history)
 
-    assert calls == [("SPY", "6mo")]
+    assert calls == [("SPY", "1y")]
     assert result.failed_symbols == []
     assert len(result.bars) == 1
     assert result.bars[0].symbol == "SPY"
@@ -64,7 +64,7 @@ def test_collect_yfinance_prices_translates_usd_cnh_for_yahoo():
 
     result = collect_yfinance_prices(["USD/CNH"], history_loader=load_history)
 
-    assert calls == [("CNH=X", "6mo")]
+    assert calls == [("CNH=X", "1y")]
     assert result.failed_symbols == []
     assert [bar.symbol for bar in result.bars] == ["USD/CNH"]
 
@@ -80,7 +80,7 @@ def test_collect_yfinance_prices_falls_back_when_primary_yahoo_symbol_is_empty()
 
     result = collect_yfinance_prices(["USD/CNH"], history_loader=load_history)
 
-    assert calls == [("CNH=X", "6mo"), ("USDCNH=X", "6mo")]
+    assert calls == [("CNH=X", "1y"), ("USDCNH=X", "1y")]
     assert result.failed_symbols == []
     assert [bar.symbol for bar in result.bars] == ["USD/CNH"]
 

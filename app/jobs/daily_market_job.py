@@ -4,10 +4,14 @@ from pathlib import Path
 from app.analyzers.company_price_bounds_analyzer import analyze_company_price_bounds
 from app.analyzers.data_coverage_analyzer import analyze_data_coverage
 from app.analyzers.daily_report_state_analyzer import (
+    analyze_fx_costs,
+    analyze_market_breadth,
     analyze_portfolio_summary,
-    assess_risk,
-    build_gpt_questions,
+    assess_market_risk,
+    assess_portfolio_risk,
+    build_gpt_tasks,
     build_report_state,
+    combine_data_quality,
     compare_report_states,
     evaluate_strategy_rules,
     extract_report_state,
@@ -97,18 +101,26 @@ def generate_daily_report(
             cash_positions=steward_state.cash_positions,
         )
     effective_date = report_date or _latest_report_date(history) or date.today()
+    data_coverage = combine_data_quality(
+        data_coverage,
+        news_quality,
+        portfolio_state,
+        effective_date,
+    )
     portfolio_summary = analyze_portfolio_summary(
         portfolio_state,
         report_profile,
         signals,
+        effective_date,
     )
     key_evidence = select_key_market_evidence(signals)
-    risk_assessment = assess_risk(
+    market_breadth = analyze_market_breadth(signals, history)
+    market_risk = assess_market_risk(
         signals,
-        sector_rotation,
-        macro_context,
-        data_coverage,
+        market_breadth,
     )
+    portfolio_risk = assess_portfolio_risk(portfolio_summary)
+    fx_costs = analyze_fx_costs(portfolio_state, history.get("USD/CNH", []))
     strategy_rules = evaluate_strategy_rules(
         signals,
         sector_rotation,
@@ -121,15 +133,19 @@ def generate_daily_report(
         daily_signal_summary,
         data_coverage,
         macro_context,
-        risk_assessment,
+        market_risk,
+        portfolio_risk,
         strategy_rules,
         key_evidence,
         portfolio_summary,
     )
     report_repo = ReportRepository(db_path)
-    previous_state = extract_report_state(report_repo.get_latest_content("daily"))
+    previous_state = extract_report_state(
+        report_repo.get_previous_content("daily", effective_date)
+        or _previous_report_file_content(report_dir, effective_date)
+    )
     changes = compare_report_states(previous_state, report_state)
-    gpt_questions = build_gpt_questions(
+    gpt_tasks = build_gpt_tasks(
         report_profile,
         changes,
         strategy_rules,
@@ -152,11 +168,14 @@ def generate_daily_report(
         portfolio_state=portfolio_state,
         news_quality=news_quality,
         portfolio_summary=portfolio_summary,
-        risk_assessment=risk_assessment,
+        risk_assessment=market_risk,
+        portfolio_risk=portfolio_risk,
+        market_breadth=market_breadth,
+        fx_costs=fx_costs,
         key_evidence=key_evidence,
         strategy_rules=strategy_rules,
         changes=changes,
-        gpt_questions=gpt_questions,
+        gpt_tasks=gpt_tasks,
         report_state=report_state,
         price_sources=price_sources,
     )
@@ -175,3 +194,24 @@ def _latest_report_date(history: dict[str, list]) -> date | None:
     if not dates:
         return None
     return max(dates)
+
+
+def _previous_report_file_content(
+    report_dir: Path,
+    before_date: date,
+) -> str | None:
+    candidates: list[tuple[date, Path]] = []
+    for path in report_dir.glob("daily-market-brief-*.md"):
+        try:
+            report_day = date.fromisoformat(
+                path.stem.removeprefix("daily-market-brief-")
+            )
+        except ValueError:
+            continue
+        if report_day < before_date:
+            candidates.append((report_day, path))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1].read_text(
+        encoding="utf-8"
+    )

@@ -47,13 +47,14 @@ def _render_state_cash(state: StewardState) -> list[str]:
     if not state.cash_positions:
         return ["No cash positions supplied."]
     lines = [
-        "| Institution | Account | Currency | Balance | As Of |",
-        "|---|---|---|---:|---|",
+        "| Institution | Account | Currency | Balance | Cash Role | As Of |",
+        "|---|---|---|---:|---|---|",
     ]
     for item in state.cash_positions:
         lines.append(
             f"| {_cell(item.institution)} | {_cell(item.account_label)} | "
             f"{item.currency} | {_format_decimal(item.balance)} | "
+            f"{item.cash_role} | "
             f"{item.as_of_date.isoformat()} |"
         )
     return lines

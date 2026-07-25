@@ -98,7 +98,8 @@ CREATE TABLE IF NOT EXISTS steward_cash_positions (
   currency TEXT NOT NULL,
   balance TEXT NOT NULL,
   as_of_date TEXT NOT NULL,
-  notes TEXT NOT NULL DEFAULT ''
+  notes TEXT NOT NULL DEFAULT '',
+  cash_role TEXT NOT NULL DEFAULT 'unclassified'
 );
 
 CREATE TABLE IF NOT EXISTS steward_position_snapshots (
@@ -135,6 +136,17 @@ def initialize_steward_database(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
         conn.executescript(_SCHEMA)
+        columns = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(steward_cash_positions)"
+            ).fetchall()
+        }
+        if "cash_role" not in columns:
+            conn.execute(
+                "ALTER TABLE steward_cash_positions "
+                "ADD COLUMN cash_role TEXT NOT NULL DEFAULT 'unclassified'"
+            )
 
 
 class StewardRepository:
@@ -357,8 +369,11 @@ class StewardRepository:
             conn.executemany(
                 """
                 INSERT INTO steward_cash_positions
-                  (institution, account_label, currency, balance, as_of_date, notes)
-                VALUES (?, ?, ?, ?, ?, ?)
+                  (
+                    institution, account_label, currency, balance, as_of_date,
+                    notes, cash_role
+                  )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -368,6 +383,7 @@ class StewardRepository:
                         str(item.balance),
                         item.as_of_date.isoformat(),
                         item.notes,
+                        item.cash_role,
                     )
                     for item in state.cash_positions
                 ],
@@ -511,6 +527,7 @@ def _row_to_cash_position(row: sqlite3.Row) -> CashPosition:
         balance=Decimal(row["balance"]),
         as_of_date=date.fromisoformat(row["as_of_date"]),
         notes=row["notes"],
+        cash_role=row["cash_role"],
     )
 
 

@@ -43,6 +43,15 @@ assets:
       name: US Dollar Index
       type: index
       role: dollar_index
+    - symbol: ^VIX
+      name: CBOE Volatility Index
+      type: index
+      role: volatility_index
+  breadth:
+    - symbol: RSP
+      name: S&P 500 Equal Weight ETF
+      type: etf
+      role: breadth_proxy
   optional:
     - BTC-USD
     - USD/CNH

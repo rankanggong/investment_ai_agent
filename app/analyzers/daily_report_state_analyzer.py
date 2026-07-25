@@ -1,38 +1,56 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import date
 import json
 
 from app.config import ReportProfile
 from app.models.analysis import (
     DataCoverage,
+    DataCoverageRow,
     DailySignalSummary,
+    FxCostComparison,
+    GptAnalysisTask,
+    MarketBreadth,
     MarketEvidence,
     MacroContext,
+    NewsQualityGate,
     PortfolioAllocation,
     PortfolioSummary,
     PriceSignal,
     ReportState,
     RiskAssessment,
+    RiskClusterAssessment,
     SectorRotation,
     StrategyRuleResult,
 )
+from app.models.price import PriceBar
 from app.steward.models import PortfolioReportState
 
 
 REPORT_STATE_PREFIX = "<!-- report-state: "
 REPORT_STATE_SUFFIX = " -->"
 KEY_EVIDENCE_LIMIT = 10
+PORTFOLIO_STALE_DAYS = 3
+
+RISK_CLUSTERS = {
+    "broad_equity_growth": {"SPY", "QQQ"},
+    "sector_style": {
+        "RSP", "XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLU",
+        "XLI", "XLC", "XLRE", "SOXX", "SMH",
+    },
+    "mega_cap_companies": {
+        "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
+    },
+    "rates_duration": {"^TNX", "TLT", "BIL"},
+    "credit": {"HYG", "LQD"},
+    "usd_cnh": {"DX-Y.NYB", "UUP", "USD/CNH"},
+    "gold": {"GLD"},
+    "crypto": {"BTC-USD"},
+}
 _CORE_EVIDENCE = [
-    "SPY",
-    "QQQ",
-    "GLD",
-    "^TNX",
-    "DX-Y.NYB",
-    "USD/CNH",
-    "TLT",
-    "HYG",
-    "LQD",
+    "SPY", "QQQ", "RSP", "^VIX", "^TNX", "DX-Y.NYB", "USD/CNH",
+    "GLD", "TLT", "HYG",
 ]
 
 
@@ -40,6 +58,7 @@ def analyze_portfolio_summary(
     portfolio_state: PortfolioReportState | None,
     profile: ReportProfile,
     price_signals: dict[str, PriceSignal],
+    report_date: date | None = None,
 ) -> PortfolioSummary:
     if portfolio_state is None:
         return PortfolioSummary(
@@ -50,20 +69,22 @@ def analyze_portfolio_summary(
             usd_cash=0.0,
             usd_daily_spend=profile.usd_daily_spend,
             usd_coverage_days=None,
+            snapshot_status="unavailable",
             notes=["No portfolio state was supplied."],
         )
 
     fx_rates = _fx_rates(portfolio_state, profile.base_currency, price_signals)
     values: dict[str, float] = {}
-    notes: list[str] = [
-        "Current allocation uses supplied holding cost, not live market value."
+    notes = [
+        "Current Allocation is the share of supplied invested holding cost; "
+        "it is not an allocation of total liquid assets."
     ]
     for holding in portfolio_state.holdings:
         rate = fx_rates.get(holding.currency)
         if rate is None:
             notes.append(
-                f"{holding.symbol} omitted from aggregation: no "
-                f"{holding.currency}/{profile.base_currency} conversion rate."
+                f"{holding.symbol} omitted: no {holding.currency}/"
+                f"{profile.base_currency} conversion rate."
             )
             continue
         values[holding.symbol] = values.get(holding.symbol, 0.0) + (
@@ -71,49 +92,28 @@ def analyze_portfolio_summary(
         )
 
     total = sum(values.values())
-    symbols = sorted(set(values) | set(profile.target_allocations))
-    allocations: list[PortfolioAllocation] = []
-    for symbol in symbols:
-        current_value = values.get(symbol, 0.0)
-        current_weight = current_value / total if total else None
-        target_weight = profile.target_allocations.get(symbol)
-        weight_gap = (
-            target_weight - current_weight
-            if target_weight is not None and current_weight is not None
-            else None
-        )
-        allocations.append(
-            PortfolioAllocation(
-                symbol=symbol,
-                current_value=current_value,
-                current_weight=current_weight,
-                target_weight=target_weight,
-                weight_gap=weight_gap,
-                target_value_gap=weight_gap * total
-                if weight_gap is not None
-                else None,
-            )
-        )
+    allocations = _allocations(values, total, profile.target_allocations)
+    cash_by_role = {"investable": 0.0, "reserved": 0.0, "unclassified": 0.0}
+    for position in portfolio_state.cash_positions:
+        rate = fx_rates.get(position.currency)
+        if rate is not None:
+            cash_by_role[position.cash_role] += float(position.balance) * rate
 
-    if not profile.target_allocations:
-        notes.append(
-            "Target allocations are not configured in config/report_profile.json."
-        )
     usd_cash = sum(
         float(position.balance)
         for position in portfolio_state.cash_positions
-        if position.currency == "USD"
+        if position.currency == "USD" and position.cash_role == "investable"
     )
-    coverage_days = (
+    coverage = (
         usd_cash / profile.usd_daily_spend
-        if profile.usd_daily_spend is not None and profile.usd_daily_spend > 0
+        if profile.usd_daily_spend and profile.usd_daily_spend > 0
         else None
     )
-    if profile.daily_investment_budget is None:
-        notes.append("Daily investment budget is not configured.")
-    if profile.usd_daily_spend is None:
-        notes.append("USD daily spend is not configured; coverage days are unavailable.")
-
+    snapshot_status = _portfolio_snapshot_status(portfolio_state, report_date)
+    if not profile.target_allocations:
+        notes.append("Target allocations are not configured.")
+    if cash_by_role["unclassified"]:
+        notes.append("Unclassified cash is excluded from investable cash.")
     return PortfolioSummary(
         base_currency=profile.base_currency,
         total_holding_cost=total,
@@ -121,27 +121,110 @@ def analyze_portfolio_summary(
         daily_investment_budget=profile.daily_investment_budget,
         usd_cash=usd_cash,
         usd_daily_spend=profile.usd_daily_spend,
-        usd_coverage_days=coverage_days,
+        usd_coverage_days=coverage,
+        investable_cash=cash_by_role["investable"],
+        reserved_cash=cash_by_role["reserved"],
+        unclassified_cash=cash_by_role["unclassified"],
+        snapshot_status=snapshot_status,
         notes=_deduplicate(notes),
     )
+
+
+def combine_data_quality(
+    market_coverage: DataCoverage,
+    news_quality: NewsQualityGate | None,
+    portfolio_state: PortfolioReportState | None,
+    report_date: date,
+) -> DataCoverage:
+    rows = list(market_coverage.rows)
+    price_rows = [row for row in rows if row.category == "Prices"]
+    below_200 = [row for row in price_rows if row.rows < 200]
+    if below_200:
+        rows.append(
+            DataCoverageRow(
+                "Technical",
+                "50D/200D trend coverage",
+                "insufficient",
+                len(price_rows) - len(below_200),
+                "N/A",
+                f"{len(below_200)} configured assets have fewer than 200 rows.",
+            )
+        )
+    if news_quality and news_quality.status in {"disabled", "data_quality_review"}:
+        rows.append(
+            DataCoverageRow(
+                "News",
+                "entity pipeline",
+                "blocked",
+                0,
+                "N/A",
+                "; ".join(news_quality.reasons) or "News pipeline is blocked.",
+            )
+        )
+    if portfolio_state is None:
+        rows.append(
+            DataCoverageRow(
+                "Portfolio", "state", "blocked", 0, "N/A",
+                "Portfolio state was not supplied.",
+            )
+        )
+    else:
+        snapshot_status = _portfolio_snapshot_status(portfolio_state, report_date)
+        snapshot_dates = [
+            item.as_of_date
+            for item in [
+                *portfolio_state.cash_positions,
+                *portfolio_state.holdings,
+            ]
+        ]
+        rows.append(
+            DataCoverageRow(
+                "Portfolio",
+                "cash and holdings",
+                snapshot_status,
+                len(snapshot_dates),
+                max(snapshot_dates).isoformat() if snapshot_dates else "N/A",
+                f"Snapshots older than {PORTFOLIO_STALE_DAYS} days are stale.",
+            )
+        )
+        unclassified = sum(
+            position.cash_role == "unclassified"
+            for position in portfolio_state.cash_positions
+        )
+        if unclassified:
+            rows.append(
+                DataCoverageRow(
+                    "Portfolio",
+                    "cash roles",
+                    "degraded",
+                    unclassified,
+                    "N/A",
+                    f"{unclassified} cash positions are unclassified.",
+                )
+            )
+    status = _overall_quality_status(rows)
+    impacts = [
+        impact
+        for impact in market_coverage.impacts
+        if "No data coverage gaps" not in impact
+    ]
+    if status != "available":
+        impacts.append(f"Overall report data quality is {status}.")
+    return DataCoverage(rows=rows, impacts=_deduplicate(impacts), status=status)
 
 
 def select_key_market_evidence(
     price_signals: dict[str, PriceSignal],
 ) -> list[MarketEvidence]:
-    selected: list[str] = [
-        symbol for symbol in _CORE_EVIDENCE if symbol in price_signals
-    ]
+    selected = [symbol for symbol in _CORE_EVIDENCE if symbol in price_signals]
     remaining = sorted(
         (
-            signal
-            for symbol, signal in price_signals.items()
+            signal for symbol, signal in price_signals.items()
             if symbol not in selected
         ),
         key=lambda signal: (
             signal.is_unusual_move,
-            abs(signal.return_1d or 0.0),
-            abs(signal.return_5d or 0.0),
+            _signal_severity(signal),
         ),
         reverse=True,
     )
@@ -152,58 +235,183 @@ def select_key_market_evidence(
     return [_market_evidence(price_signals[symbol]) for symbol in selected]
 
 
-def assess_risk(
+def analyze_market_breadth(
+    signals: dict[str, PriceSignal],
+    history: dict[str, list[PriceBar]],
+) -> MarketBreadth:
+    tracked = [
+        signal for symbol, signal in signals.items()
+        if not symbol.startswith("^") and symbol not in {"USD/CNH", "DX-Y.NYB"}
+    ]
+    above_50 = sum(
+        signal.latest is not None
+        and signal.sma_50 is not None
+        and signal.latest > signal.sma_50
+        for signal in tracked
+    )
+    above_200 = sum(
+        signal.latest is not None
+        and signal.sma_200 is not None
+        and signal.latest > signal.sma_200
+        for signal in tracked
+    )
+    eligible_50 = sum(signal.sma_50 is not None for signal in tracked)
+    eligible_200 = sum(signal.sma_200 is not None for signal in tracked)
+    rsp = signals.get("RSP")
+    spy = signals.get("SPY")
+    vix = signals.get("^VIX")
+    return MarketBreadth(
+        tracked_count=len(tracked),
+        above_50d_count=above_50,
+        above_200d_count=above_200,
+        above_50d_share=above_50 / eligible_50 if eligible_50 else None,
+        above_200d_share=above_200 / eligible_200 if eligible_200 else None,
+        rsp_vs_spy_20d=(
+            rsp.return_20d - spy.return_20d
+            if rsp and spy
+            and rsp.return_20d is not None
+            and spy.return_20d is not None
+            else None
+        ),
+        vix_level=vix.latest if vix else None,
+        vix_percentile=_level_percentile(history.get("^VIX", [])),
+    )
+
+
+def assess_market_risk(
     price_signals: dict[str, PriceSignal],
-    sector_rotation: SectorRotation,
-    macro_context: MacroContext | None,
-    data_coverage: DataCoverage | None,
+    breadth: MarketBreadth,
 ) -> RiskAssessment:
-    unusual_count = sum(
-        signal.is_unusual_move for signal in price_signals.values()
+    cluster_results: list[RiskClusterAssessment] = []
+    for cluster, symbols in RISK_CLUSTERS.items():
+        triggered = [
+            signal for symbol, signal in price_signals.items()
+            if symbol in symbols and signal.is_unusual_move
+        ]
+        if not triggered:
+            continue
+        severity = max(_signal_severity(signal) for signal in triggered)
+        points = min(10, max(1, round(severity * 5)))
+        cluster_results.append(
+            RiskClusterAssessment(
+                cluster=cluster,
+                symbols=tuple(sorted(signal.symbol for signal in triggered)),
+                severity=severity,
+                points=points,
+                evidence_refs=tuple(
+                    sorted(_evidence_ref(signal) for signal in triggered)
+                ),
+            )
+        )
+    cluster_points = sum(item.points for item in cluster_results)
+    breadth_points = 0
+    if breadth.above_50d_share is not None:
+        breadth_points += round(max(0.0, 0.5 - breadth.above_50d_share) * 20)
+    if breadth.above_200d_share is not None:
+        breadth_points += round(max(0.0, 0.5 - breadth.above_200d_share) * 20)
+    breadth_points = min(15, breadth_points)
+    vix_points = 0
+    if breadth.vix_level is not None:
+        vix_points = 15 if breadth.vix_level >= 30 else 8 if breadth.vix_level >= 20 else 0
+    if breadth.vix_percentile is not None and breadth.vix_percentile >= 0.90:
+        vix_points = max(vix_points, 12)
+    score = min(100, cluster_points + breadth_points + vix_points)
+    explanations = [
+        f"Unusual-move risk: {len(cluster_results)} risk clusters, "
+        f"{cluster_points} points; correlated assets count once per cluster.",
+        f"Tracked-universe breadth: {breadth_points} points.",
+        f"VIX level/percentile: {vix_points} points.",
+        f"Total market risk: {score}/100.",
+    ]
+    return RiskAssessment(
+        score=score,
+        level=_risk_level(score),
+        explanations=explanations,
+        scope="market",
+        clusters=cluster_results,
     )
-    unusual_points = min(30, unusual_count * 3)
-    quality_points = (
-        20
-        if data_coverage is None or data_coverage.status != "available"
-        else 0
+
+
+def assess_portfolio_risk(summary: PortfolioSummary) -> RiskAssessment:
+    gaps = [
+        abs(item.weight_gap)
+        for item in summary.allocations
+        if item.weight_gap is not None
+    ]
+    max_gap = max(gaps, default=0.0)
+    gap_points = min(30, round(max_gap * 200))
+    max_weight = max(
+        (item.current_weight or 0.0 for item in summary.allocations),
+        default=0.0,
     )
-    sector_points = round(max(0.0, -sector_rotation.risk_on_score) * 20)
-    spy = price_signals.get("SPY")
-    spy_return_5d = spy.return_5d if spy is not None else None
-    market_points = round(
-        min(20.0, max(0.0, -(spy_return_5d or 0.0) * 400))
-    )
-    macro_points = (
-        20
-        if macro_context is not None
-        and macro_context.overall_regime == "risk_off_with_macro_pressure"
+    concentration_points = min(15, round(max(0.0, max_weight - 0.5) * 50))
+    stale_points = 25 if summary.snapshot_status == "stale" else 0
+    unclassified_points = 20 if (summary.unclassified_cash or 0) > 0 else 0
+    coverage_points = (
+        15
+        if summary.usd_coverage_days is not None
+        and summary.usd_coverage_days < 90
+        else 8
+        if summary.usd_coverage_days is not None
+        and summary.usd_coverage_days < 120
         else 0
     )
     score = min(
         100,
-        unusual_points
-        + quality_points
-        + sector_points
-        + market_points
-        + macro_points,
+        gap_points + concentration_points + stale_points
+        + unclassified_points + coverage_points,
     )
-    level = "high" if score >= 60 else "elevated" if score >= 30 else "low"
-    explanations = [
-        f"Unusual moves: {unusual_count} × 3 points, capped at 30 = {unusual_points}.",
-        f"Data-quality penalty: {quality_points} points.",
-        (
-            "Negative sector-rotation contribution: "
-            f"{sector_points} points from risk-on score "
-            f"{sector_rotation.risk_on_score:.2f}."
-        ),
-        (
-            "SPY 5D drawdown contribution: "
-            f"{market_points} points from {_format_percent(spy_return_5d)}."
-        ),
-        f"Confirmed risk-off macro regime: {macro_points} points.",
-        f"Total: {score}/100; 0–29 low, 30–59 elevated, 60–100 high.",
-    ]
-    return RiskAssessment(score=score, level=level, explanations=explanations)
+    return RiskAssessment(
+        score=score,
+        level=_risk_level(score),
+        scope="portfolio",
+        explanations=[
+            f"Target-allocation gap: {gap_points} points.",
+            f"Invested-holdings concentration: {concentration_points} points.",
+            f"Stale portfolio snapshots: {stale_points} points.",
+            f"Unclassified cash: {unclassified_points} points.",
+            f"USD coverage: {coverage_points} points.",
+            f"Total portfolio risk: {score}/100.",
+        ],
+    )
+
+
+def analyze_fx_costs(
+    portfolio_state: PortfolioReportState | None,
+    usd_cnh_history: list[PriceBar],
+) -> list[FxCostComparison]:
+    if portfolio_state is None:
+        return []
+    results: list[FxCostComparison] = []
+    for conversion in portfolio_state.fx_conversions:
+        if not (
+            conversion.sold_currency == "CNY"
+            and conversion.bought_currency == "USD"
+        ):
+            continue
+        sold = float(conversion.sold_amount)
+        bought = float(conversion.bought_amount)
+        if conversion.fee_currency == "CNY":
+            sold += float(conversion.fee_amount)
+        elif conversion.fee_currency == "USD":
+            bought -= float(conversion.fee_amount)
+        all_in = sold / bought
+        spot = _spot_on_or_before(usd_cnh_history, conversion.fx_date)
+        results.append(
+            FxCostComparison(
+                fx_date=conversion.fx_date,
+                pair="CNY/USD",
+                effective_rate=float(conversion.effective_rate),
+                all_in_rate=all_in,
+                spot_rate=spot,
+                spot_premium=all_in / spot - 1 if spot else None,
+                benchmark_note=(
+                    "USD/CNH close is an offshore approximation, not an exact "
+                    "bank CNY spread."
+                ),
+            )
+        )
+    return results
 
 
 def evaluate_strategy_rules(
@@ -218,111 +426,89 @@ def evaluate_strategy_rules(
     if data_coverage is None or data_coverage.status != "available":
         results.append(
             StrategyRuleResult(
-                name="Data quality circuit breaker",
-                status="triggered",
-                observed=data_coverage.status if data_coverage else "unavailable",
-                threshold="Any missing, stale, insufficient, or blocked module",
-                reason="Incomplete inputs block confident downstream interpretation.",
+                "Data quality circuit breaker",
+                "triggered",
+                data_coverage.status if data_coverage else "unavailable",
+                "Overall quality != available",
+                "A required report module is blocked, stale, or degraded.",
+                evidence_refs=("DQ:OVERALL",),
             )
         )
-
-    unusual_count = sum(
-        signal.is_unusual_move for signal in price_signals.values()
-    )
-    if unusual_count:
+    for cluster, symbols in RISK_CLUSTERS.items():
+        triggered = [
+            signal for symbol, signal in price_signals.items()
+            if symbol in symbols and signal.is_unusual_move
+        ]
+        if not triggered:
+            continue
+        strongest = max(triggered, key=_signal_severity)
         results.append(
             StrategyRuleResult(
-                name="Unusual price move review",
-                status="triggered",
-                observed=f"{unusual_count} assets",
-                threshold="At least one deterministic price/volume trigger",
-                reason="One or more assets crossed the existing move detector.",
+                f"Unusual move cluster: {cluster}",
+                "triggered",
+                ", ".join(sorted(signal.symbol for signal in triggered)),
+                "z ≥ 2.0, ATR ≥ 1.5x, or percentile ≥ 95%",
+                strongest.reason,
+                return_zscore=strongest.return_zscore_60d,
+                atr_multiple=strongest.atr_multiple,
+                historical_percentile=strongest.historical_percentile,
+                evidence_refs=tuple(
+                    sorted(_evidence_ref(signal) for signal in triggered)
+                ),
             )
         )
-
-    sector_magnitude = abs(sector_rotation.risk_on_score)
-    if sector_magnitude >= 0.35:
-        status = "triggered"
-    elif sector_magnitude >= 0.28:
-        status = "near"
-    else:
-        status = ""
-    if status:
+    magnitude = abs(sector_rotation.risk_on_score)
+    if magnitude >= 0.28:
         results.append(
             StrategyRuleResult(
-                name="Sector rotation monitor",
-                status=status,
-                observed=f"{sector_rotation.risk_on_score:.2f}",
-                threshold="Absolute risk-on score ≥ 0.35; near at ≥ 0.28",
-                reason="Sector leadership is moving toward a regime boundary.",
+                "Sector rotation monitor",
+                "triggered" if magnitude >= 0.35 else "near",
+                f"{sector_rotation.risk_on_score:.2f}",
+                "|risk-on score| ≥ 0.35; near ≥ 0.28",
+                "Sector leadership is near or beyond the regime boundary.",
+                evidence_refs=("BREADTH:SECTOR_ROTATION",),
             )
         )
-
-    if macro_context is not None and macro_context.overall_regime not in {
-        "mixed",
-        "unknown",
-    }:
-        results.append(
-            StrategyRuleResult(
-                name="Macro regime confirmation",
-                status="triggered",
-                observed=macro_context.overall_regime,
-                threshold="Deterministic regime is neither mixed nor unknown",
-                reason="Rates, USD, credit, and equity evidence align.",
-            )
-        )
-
     gaps = [
         abs(row.weight_gap)
         for row in portfolio_summary.allocations
         if row.weight_gap is not None
     ]
-    if gaps:
-        maximum_gap = max(gaps)
-        if maximum_gap >= 0.05:
-            status = "triggered"
-        elif maximum_gap >= 0.04:
-            status = "near"
-        else:
-            status = ""
-        if status:
-            results.append(
-                StrategyRuleResult(
-                    name="Target allocation drift",
-                    status=status,
-                    observed=_format_percent(maximum_gap),
-                    threshold="Absolute target gap ≥ 5%; near at ≥ 4%",
-                    reason="At least one configured allocation is outside its review band.",
-                )
+    if gaps and max(gaps) >= 0.04:
+        results.append(
+            StrategyRuleResult(
+                "Target allocation drift",
+                "triggered" if max(gaps) >= 0.05 else "near",
+                _format_percent(max(gaps)),
+                "Absolute invested-holdings target gap ≥ 5%; near ≥ 4%",
+                "At least one invested holding is outside its review band.",
+                evidence_refs=("PORTFOLIO:ALLOCATION",),
             )
-
-    if portfolio_summary.usd_coverage_days is not None:
-        days = portfolio_summary.usd_coverage_days
-        status = "triggered" if days < 90 else "near" if days < 120 else ""
-        if status:
-            results.append(
-                StrategyRuleResult(
-                    name="USD coverage review",
-                    status=status,
-                    observed=f"{days:.1f} days",
-                    threshold="< 90 days; near below 120 days",
-                    reason="Supplied USD cash is close to or below the coverage band.",
-                )
-            )
-
+        )
     divergences = [
-        row.symbol
-        for row in evidence
+        row for row in evidence
         if row.short_term_state in {"countertrend_rebound", "countertrend_pullback"}
     ]
     if divergences:
+        strongest = max(
+            divergences,
+            key=lambda row: max(
+                row.return_zscore or 0,
+                row.atr_multiple or 0,
+                row.historical_percentile or 0,
+            ),
+        )
         results.append(
             StrategyRuleResult(
-                name="Structural/short-term divergence",
-                status="triggered",
-                observed=", ".join(divergences),
-                threshold="5D direction opposes the 20D structural trend",
-                reason="Short-term movement has not yet changed the structural trend.",
+                "Medium-term/short-term divergence",
+                "triggered",
+                ", ".join(row.symbol for row in divergences),
+                "5D direction opposes the 50D/200D medium-term trend",
+                "Short-term movement has not changed the medium-term trend.",
+                strongest.return_zscore,
+                strongest.atr_multiple,
+                strongest.historical_percentile,
+                tuple(row.evidence_ref for row in divergences),
             )
         )
     return results
@@ -332,32 +518,31 @@ def build_report_state(
     daily_signal_summary: DailySignalSummary | None,
     data_coverage: DataCoverage | None,
     macro_context: MacroContext | None,
-    risk: RiskAssessment,
+    market_risk: RiskAssessment,
+    portfolio_risk: RiskAssessment,
     rules: list[StrategyRuleResult],
     evidence: list[MarketEvidence],
     portfolio: PortfolioSummary,
 ) -> ReportState:
     return ReportState(
         executive_status=(
-            daily_signal_summary.status
-            if daily_signal_summary is not None
-            else "not_available"
+            daily_signal_summary.status if daily_signal_summary else "not_available"
         ),
         data_quality_status=(
-            data_coverage.status if data_coverage is not None else "unavailable"
+            data_coverage.status if data_coverage else "unavailable"
         ),
         macro_regime=(
-            macro_context.overall_regime
-            if macro_context is not None
-            else "unavailable"
+            macro_context.overall_regime if macro_context else "unavailable"
         ),
-        risk_score=risk.score,
-        risk_level=risk.level,
+        market_risk_score=market_risk.score,
+        market_risk_level=market_risk.level,
+        portfolio_risk_score=portfolio_risk.score,
+        portfolio_risk_level=portfolio_risk.level,
         triggered_rules=tuple(
             sorted(f"{rule.name}:{rule.status}" for rule in rules)
         ),
-        structural_trends=tuple(
-            sorted(f"{row.symbol}:{row.structural_trend}" for row in evidence)
+        medium_term_trends=tuple(
+            sorted(f"{row.symbol}:{row.medium_term_trend}" for row in evidence)
         ),
         portfolio_gaps=tuple(
             sorted(
@@ -381,22 +566,44 @@ def extract_report_state(content: str | None) -> ReportState | None:
     if not content:
         return None
     for line in content.splitlines():
-        if line.startswith(REPORT_STATE_PREFIX) and line.endswith(
-            REPORT_STATE_SUFFIX
+        if not (
+            line.startswith(REPORT_STATE_PREFIX)
+            and line.endswith(REPORT_STATE_SUFFIX)
         ):
-            payload = line[len(REPORT_STATE_PREFIX) : -len(REPORT_STATE_SUFFIX)]
-            data = json.loads(payload)
-            return ReportState(
-                executive_status=data["executive_status"],
-                data_quality_status=data["data_quality_status"],
-                macro_regime=data["macro_regime"],
-                risk_score=int(data["risk_score"]),
-                risk_level=data["risk_level"],
-                triggered_rules=tuple(data["triggered_rules"]),
-                structural_trends=tuple(data["structural_trends"]),
-                portfolio_gaps=tuple(data["portfolio_gaps"]),
-            )
+            continue
+        data = json.loads(
+            line[len(REPORT_STATE_PREFIX) : -len(REPORT_STATE_SUFFIX)]
+        )
+        return ReportState(
+            executive_status=data["executive_status"],
+            data_quality_status=data["data_quality_status"],
+            macro_regime=data["macro_regime"],
+            market_risk_score=int(
+                data.get("market_risk_score", data.get("risk_score", 0))
+            ),
+            market_risk_level=data.get(
+                "market_risk_level", data.get("risk_level", "unknown")
+            ),
+            portfolio_risk_score=int(data.get("portfolio_risk_score", 0)),
+            portfolio_risk_level=data.get("portfolio_risk_level", "unknown"),
+            triggered_rules=tuple(data["triggered_rules"]),
+            medium_term_trends=tuple(
+                _normalize_legacy_trend(value)
+                for value in data.get(
+                    "medium_term_trends",
+                    data.get("structural_trends", []),
+                )
+            ),
+            portfolio_gaps=tuple(data["portfolio_gaps"]),
+        )
     return None
+
+
+def _normalize_legacy_trend(value: str) -> str:
+    return (
+        value.replace("structural_uptrend", "legacy_uptrend")
+        .replace("structural_downtrend", "legacy_downtrend")
+    )
 
 
 def compare_report_states(
@@ -405,87 +612,127 @@ def compare_report_states(
 ) -> list[str]:
     if previous is None:
         return ["Baseline created; no previous comparable report state was found."]
-    changes: list[str] = []
     labels = {
         "executive_status": "Executive status",
         "data_quality_status": "Data quality",
         "macro_regime": "Macro regime",
-        "risk_score": "Risk score",
-        "risk_level": "Risk level",
+        "market_risk_score": "Market risk score",
+        "market_risk_level": "Market risk level",
+        "portfolio_risk_score": "Portfolio risk score",
+        "portfolio_risk_level": "Portfolio risk level",
         "triggered_rules": "Triggered/near rules",
-        "structural_trends": "Structural trends",
+        "medium_term_trends": "Medium-term trends",
         "portfolio_gaps": "Portfolio target gaps",
     }
-    for field_name, label in labels.items():
-        old = getattr(previous, field_name)
-        new = getattr(current, field_name)
-        if old != new:
-            changes.append(f"{label}: {_state_value(old)} → {_state_value(new)}.")
+    changes = [
+        f"{label}: {_state_value(getattr(previous, field))} → "
+        f"{_state_value(getattr(current, field))}."
+        for field, label in labels.items()
+        if getattr(previous, field) != getattr(current, field)
+    ]
     return changes or ["No state changes detected."]
 
 
-def build_gpt_questions(
+def build_gpt_tasks(
     profile: ReportProfile,
     changes: list[str],
     rules: list[StrategyRuleResult],
     evidence: list[MarketEvidence],
-) -> list[str]:
-    questions: list[str] = []
-    if any("Baseline created" not in change and "No state changes" not in change for change in changes):
+) -> list[GptAnalysisTask]:
+    refs = tuple(row.evidence_ref for row in evidence[:6])
+    questions: list[tuple[str, tuple[str, ...]]] = []
+    if any("Baseline created" not in item and "No state changes" not in item for item in changes):
         questions.append(
-            "哪些新增状态变化最重要，它们是否改变了此前的核心判断？"
+            ("哪些状态变化最重要，它们是否改变此前判断？", ("STATE:CHANGES",))
         )
     if rules:
-        names = "、".join(rule.name for rule in rules[:4])
-        questions.append(f"如何解释已触发或接近触发的规则（{names}）？")
-    divergences = [
-        row.symbol
-        for row in evidence
-        if row.short_term_state in {"countertrend_rebound", "countertrend_pullback"}
-    ]
-    if divergences:
         questions.append(
-            f"{'、'.join(divergences)} 的短期走势与结构趋势背离，确认与失效条件是什么？"
+            (
+                "如何解释已触发或接近触发的规则，并识别共同风险簇？",
+                tuple(dict.fromkeys(
+                    ref for rule in rules for ref in rule.evidence_refs
+                )),
+            )
         )
-    questions.extend(profile.gpt_questions)
-    return _deduplicate(questions)[:6]
+    questions.extend((question, refs) for question in profile.gpt_questions)
+    expected = (
+        "Conclusion; supporting evidence; counterevidence; confidence; "
+        "confirmation conditions; invalidation conditions."
+    )
+    return [
+        GptAnalysisTask(question, evidence_refs, expected, "State confidence as low/medium/high.")
+        for question, evidence_refs in _deduplicate_pairs(questions)[:6]
+    ]
+
+
+def _allocations(
+    values: dict[str, float],
+    total: float,
+    targets: dict[str, float],
+) -> list[PortfolioAllocation]:
+    result = []
+    for symbol in sorted(set(values) | set(targets)):
+        current_value = values.get(symbol, 0.0)
+        current_weight = current_value / total if total else None
+        target = targets.get(symbol)
+        gap = (
+            target - current_weight
+            if target is not None and current_weight is not None
+            else None
+        )
+        result.append(
+            PortfolioAllocation(
+                symbol,
+                current_value,
+                current_weight,
+                target,
+                gap,
+                gap * total if gap is not None else None,
+            )
+        )
+    return result
 
 
 def _market_evidence(signal: PriceSignal) -> MarketEvidence:
-    structural = _structural_trend(signal.return_20d)
-    short_term = _short_term_state(signal.return_5d, signal.return_20d)
-    reason = signal.reason or _trend_detection_reason(structural, short_term)
+    trend = _medium_term_trend(signal)
+    short_term = _short_term_state(signal.return_5d, trend)
     return MarketEvidence(
         symbol=signal.symbol,
         latest=signal.latest,
         return_1d=signal.return_1d,
         return_5d=signal.return_5d,
         return_20d=signal.return_20d,
-        structural_trend=structural,
+        medium_term_trend=trend,
         short_term_state=short_term,
-        detection_reason=reason,
+        detection_reason=signal.reason,
+        return_zscore=signal.return_zscore_60d,
+        atr_multiple=signal.atr_multiple,
+        historical_percentile=signal.historical_percentile,
+        sma_50=signal.sma_50,
+        sma_200=signal.sma_200,
+        drawdown_from_high=signal.drawdown_from_high,
+        evidence_ref=_evidence_ref(signal),
     )
 
 
-def _structural_trend(return_20d: float | None) -> str:
-    if return_20d is None:
-        return "unknown"
-    if return_20d >= 0.03:
-        return "structural_uptrend"
-    if return_20d <= -0.03:
-        return "structural_downtrend"
-    return "range"
+def _medium_term_trend(signal: PriceSignal) -> str:
+    if signal.latest is None or signal.sma_50 is None:
+        return "insufficient"
+    if signal.sma_200 is None:
+        return "above_50d" if signal.latest >= signal.sma_50 else "below_50d"
+    if signal.latest >= signal.sma_50 >= signal.sma_200:
+        return "medium_term_uptrend"
+    if signal.latest <= signal.sma_50 <= signal.sma_200:
+        return "medium_term_downtrend"
+    return "mixed"
 
 
-def _short_term_state(
-    return_5d: float | None,
-    return_20d: float | None,
-) -> str:
-    if return_5d is None or return_20d is None:
+def _short_term_state(return_5d: float | None, trend: str) -> str:
+    if return_5d is None:
         return "unknown"
-    if return_5d >= 0.01 and return_20d <= -0.03:
+    if return_5d >= 0.01 and trend in {"medium_term_downtrend", "below_50d"}:
         return "countertrend_rebound"
-    if return_5d <= -0.01 and return_20d >= 0.03:
+    if return_5d <= -0.01 and trend in {"medium_term_uptrend", "above_50d"}:
         return "countertrend_pullback"
     if return_5d >= 0.01:
         return "short_term_strength"
@@ -494,30 +741,84 @@ def _short_term_state(
     return "flat"
 
 
-def _trend_detection_reason(structural: str, short_term: str) -> str:
-    return f"20D={structural}; 5D={short_term}"
+def _signal_severity(signal: PriceSignal) -> float:
+    return max(
+        (signal.return_zscore_60d or 0) / 2.0,
+        (signal.atr_multiple or 0) / 1.5,
+        (signal.historical_percentile or 0) / 0.95,
+    )
+
+
+def _portfolio_snapshot_status(
+    state: PortfolioReportState,
+    report_date: date | None,
+) -> str:
+    if report_date is None:
+        return "available"
+    snapshots = [
+        item.as_of_date for item in [*state.cash_positions, *state.holdings]
+    ]
+    if not snapshots:
+        return "blocked"
+    return (
+        "stale"
+        if any((report_date - snapshot).days > PORTFOLIO_STALE_DAYS for snapshot in snapshots)
+        else "available"
+    )
+
+
+def _overall_quality_status(rows: list[DataCoverageRow]) -> str:
+    statuses = {row.status for row in rows}
+    if "blocked" in statuses:
+        return "blocked"
+    if "stale" in statuses:
+        return "stale"
+    if any(status != "available" for status in statuses):
+        return "degraded"
+    return "available"
 
 
 def _fx_rates(
-    portfolio_state: PortfolioReportState,
+    state: PortfolioReportState,
     base_currency: str,
-    price_signals: dict[str, PriceSignal],
+    signals: dict[str, PriceSignal],
 ) -> dict[str, float]:
     rates = {base_currency: 1.0}
-    usd_cnh = price_signals.get("USD/CNH")
+    usd_cnh = signals.get("USD/CNH")
     if base_currency == "CNY" and usd_cnh and usd_cnh.latest:
         rates["USD"] = usd_cnh.latest
-    if "USD" not in rates and base_currency == "CNY":
+    if base_currency == "CNY" and "USD" not in rates:
         conversions = [
-            conversion
-            for conversion in portfolio_state.fx_conversions
-            if conversion.sold_currency == "CNY"
-            and conversion.bought_currency == "USD"
+            item for item in state.fx_conversions
+            if item.sold_currency == "CNY" and item.bought_currency == "USD"
         ]
         if conversions:
-            latest = max(conversions, key=lambda item: item.fx_date)
-            rates["USD"] = float(latest.effective_rate)
+            rates["USD"] = float(
+                max(conversions, key=lambda item: item.fx_date).effective_rate
+            )
     return rates
+
+
+def _spot_on_or_before(bars: list[PriceBar], target: date) -> float | None:
+    eligible = [bar for bar in bars if bar.date <= target]
+    return max(eligible, key=lambda bar: bar.date).close if eligible else None
+
+
+def _level_percentile(bars: list[PriceBar]) -> float | None:
+    if len(bars) < 20:
+        return None
+    ordered = sorted(bar.close for bar in bars[-252:])
+    latest = bars[-1].close
+    return sum(value <= latest for value in ordered) / len(ordered)
+
+
+def _evidence_ref(signal: PriceSignal) -> str:
+    observed = signal.latest_date.isoformat() if signal.latest_date else "N/A"
+    return f"PRICE:{signal.symbol}:{observed}"
+
+
+def _risk_level(score: int) -> str:
+    return "high" if score >= 60 else "elevated" if score >= 30 else "low"
 
 
 def _state_value(value) -> str:
@@ -532,3 +833,15 @@ def _format_percent(value: float | None) -> str:
 
 def _deduplicate(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
+
+
+def _deduplicate_pairs(
+    values: list[tuple[str, tuple[str, ...]]],
+) -> list[tuple[str, tuple[str, ...]]]:
+    seen: set[str] = set()
+    result = []
+    for question, refs in values:
+        if question not in seen:
+            result.append((question, refs))
+            seen.add(question)
+    return result
