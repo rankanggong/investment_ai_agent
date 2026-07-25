@@ -34,6 +34,15 @@ assets:
     - BIL
     - HYG
     - LQD
+  macro_actual:
+    - symbol: ^TNX
+      name: US 10-Year Treasury Yield
+      type: index
+      role: treasury_yield
+    - symbol: DX-Y.NYB
+      name: US Dollar Index
+      type: index
+      role: dollar_index
   optional:
     - BTC-USD
     - USD/CNH

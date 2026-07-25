@@ -45,3 +45,26 @@ def test_macro_context_identifies_supportive_risk_backdrop():
     assert result.evidence_rows[-1].evidence == (
         "SPY 5D 3.00%; supportive components 3; pressure components 0"
     )
+
+
+def test_macro_context_prefers_actual_yield_and_dollar_index_levels():
+    treasury = signal("^TNX", 0.02, 0.03)
+    treasury = PriceSignal(**{**treasury.__dict__, "latest": 4.5})
+    dollar = signal("DX-Y.NYB", -0.02, -0.03)
+    dollar = PriceSignal(**{**dollar.__dict__, "latest": 98.2})
+
+    result = analyze_macro_context(
+        {
+            "SPY": signal("SPY", 0.02, 0.03),
+            "^TNX": treasury,
+            "DX-Y.NYB": dollar,
+            "HYG": signal("HYG", 0.02, 0.03),
+            "LQD": signal("LQD", 0.01, 0.02),
+            "GLD": signal("GLD", 0.02, 0.03),
+        }
+    )
+
+    assert result.rates_context == "rates_pressure"
+    assert result.usd_context == "usd_weakening"
+    assert result.evidence_rows[0].evidence == "US 10Y yield 4.50; 5D 2.00%"
+    assert result.evidence_rows[1].evidence == "US Dollar Index 98.20; 5D -2.00%"

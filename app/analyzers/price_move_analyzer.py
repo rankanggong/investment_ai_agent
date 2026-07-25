@@ -30,6 +30,8 @@ def _analyze_symbol(symbol: str, bars: list[PriceBar]) -> PriceSignal:
         volatility_zscore=volatility_zscore,
         is_unusual_move=is_unusual,
         reason=reason,
+        latest=latest.close,
+        latest_date=latest.date,
     )
 
 
@@ -95,4 +97,3 @@ def _unusual_move_reason(
             reasons.append("5D return exceeds recent weekly volatility proxy")
 
     return bool(reasons), "; ".join(reasons)
-

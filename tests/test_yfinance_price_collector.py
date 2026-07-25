@@ -64,7 +64,23 @@ def test_collect_yfinance_prices_translates_usd_cnh_for_yahoo():
 
     result = collect_yfinance_prices(["USD/CNH"], history_loader=load_history)
 
-    assert calls == [("USDCNH=X", "6mo")]
+    assert calls == [("CNH=X", "6mo")]
+    assert result.failed_symbols == []
+    assert [bar.symbol for bar in result.bars] == ["USD/CNH"]
+
+
+def test_collect_yfinance_prices_falls_back_when_primary_yahoo_symbol_is_empty():
+    calls = []
+
+    def load_history(symbol, period):
+        calls.append((symbol, period))
+        if symbol == "CNH=X":
+            return FakeHistory([])
+        return FakeHistory([(date(2026, 6, 9), {"Close": 7.18})])
+
+    result = collect_yfinance_prices(["USD/CNH"], history_loader=load_history)
+
+    assert calls == [("CNH=X", "6mo"), ("USDCNH=X", "6mo")]
     assert result.failed_symbols == []
     assert [bar.symbol for bar in result.bars] == ["USD/CNH"]
 

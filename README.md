@@ -34,10 +34,15 @@ python -m app.main collect prices --yfinance
 python -m app.main report daily
 ```
 
-The daily market report reads holding snapshots and FX conversions from the
-steward database and includes them in `Portfolio Holdings` and `FX Conversions`.
-Cash positions are not included in the daily market report. Use `--steward-db`
-to select a non-default steward database.
+The daily market report reads cash positions, holding snapshots, and FX
+conversions from the steward database. Its main body is a compact market-state
+view; full account detail is kept in the appendix. Use `--steward-db` to select
+a non-default steward database.
+
+Report-specific portfolio targets, daily investment budget, USD daily spend,
+and standing GPT questions are configured in `config/report_profile.json`.
+Target allocations must sum to `1.0`. Unconfigured values remain `N/A`; the
+agent does not invent allocation targets or spending assumptions.
 
 CSV imports require these columns:
 
@@ -54,6 +59,25 @@ python -m app.main collect prices --yfinance --symbols SPY QQQ
 
 Successful symbols are saved even when another symbol fails. Failed symbols are
 listed in the command output.
+
+`USD/CNH` is stored under that domain symbol while Yahoo retrieval tries
+`CNH=X` first and `USDCNH=X` when the primary code returns no history. The
+watchlist also includes the US 10-year Treasury yield (`^TNX`) and US Dollar
+Index (`DX-Y.NYB`) so the report can prefer actual macro market levels over ETF
+proxies when those histories are available.
+
+The daily report contains:
+
+- executive state and issue-only data quality;
+- cost-based portfolio aggregation, configured target gaps, daily budget, and
+  USD coverage days;
+- state changes since the previous comparable report;
+- at most ten key market/macro evidence rows, separating 20-day structure from
+  5-day countertrend movement;
+- triggered or near-threshold deterministic rules with an explained risk score;
+- GPT analysis questions; and
+- an appendix with full price evidence, account detail, technical bounds, macro
+  evidence, and raw price sources.
 
 The generated report is research support only. It does not provide trading advice, buy/sell instructions, or predictions.
 

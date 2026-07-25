@@ -17,6 +17,7 @@ from app.storage.repositories.price_repo import PriceRepository
 
 DEFAULT_DB_PATH = Path(os.environ.get("FINANCE_AGENT_DB_PATH", "data/finance.db"))
 DEFAULT_WATCHLIST_PATH = Path("config/watchlist.yaml")
+DEFAULT_REPORT_PROFILE_PATH = Path("config/report_profile.json")
 DEFAULT_REPORT_DIR = Path(os.environ.get("FINANCE_AGENT_REPORT_DIR", "data/reports"))
 DEFAULT_STEWARD_DB_PATH = Path(
     os.environ.get("FINANCE_AGENT_STEWARD_DB_PATH", "data/steward/steward.db")
@@ -51,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     daily.add_argument("--watchlist", type=Path, default=DEFAULT_WATCHLIST_PATH)
     daily.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
     daily.add_argument("--steward-db", type=Path, default=DEFAULT_STEWARD_DB_PATH)
+    daily.add_argument(
+        "--report-profile",
+        type=Path,
+        default=DEFAULT_REPORT_PROFILE_PATH,
+    )
 
     steward = subparsers.add_parser(
         "steward",
@@ -135,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
             args.watchlist,
             args.report_dir,
             steward_db_path=args.steward_db,
+            report_profile_path=args.report_profile,
         )
         print(f"Wrote daily report to {path}")
         return 0

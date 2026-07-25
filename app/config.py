@@ -1,7 +1,43 @@
+from dataclasses import dataclass, field
+import json
 from pathlib import Path
 from typing import Any
 
 from app.models.asset import Asset, Watchlist
+
+
+@dataclass(frozen=True)
+class ReportProfile:
+    base_currency: str = "CNY"
+    target_allocations: dict[str, float] = field(default_factory=dict)
+    daily_investment_budget: float | None = None
+    usd_daily_spend: float | None = None
+    gpt_questions: list[str] = field(default_factory=list)
+
+
+def load_report_profile(path: Path | None) -> ReportProfile:
+    if path is None or not path.exists():
+        return ReportProfile()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    targets = {
+        str(symbol).upper(): float(weight)
+        for symbol, weight in data.get("target_allocations", {}).items()
+    }
+    if targets and abs(sum(targets.values()) - 1.0) > 0.0001:
+        raise ValueError("target_allocations must sum to 1.0")
+    return ReportProfile(
+        base_currency=str(data.get("base_currency", "CNY")).upper(),
+        target_allocations=targets,
+        daily_investment_budget=_optional_float(
+            data.get("daily_investment_budget")
+        ),
+        usd_daily_spend=_optional_float(data.get("usd_daily_spend")),
+        gpt_questions=[str(question) for question in data.get("gpt_questions", [])],
+    )
+
+
+def _optional_float(value: Any) -> float | None:
+    return None if value is None else float(value)
 
 
 def load_watchlist(path: Path) -> Watchlist:
@@ -92,4 +128,3 @@ def _parse_included_watchlist(text: str) -> dict[str, Any]:
             current_item[key.strip()] = raw_value.strip()
 
     return result
-

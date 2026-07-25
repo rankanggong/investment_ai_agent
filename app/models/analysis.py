@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 
@@ -13,6 +13,8 @@ class PriceSignal:
     volatility_zscore: float | None
     is_unusual_move: bool
     reason: str
+    latest: float | None = None
+    latest_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +149,68 @@ class MacroContext:
     overall_regime: str
     notes: list[str]
     evidence_rows: list[MacroEvidenceRow] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PortfolioAllocation:
+    symbol: str
+    current_value: float | None
+    current_weight: float | None
+    target_weight: float | None
+    weight_gap: float | None
+    target_value_gap: float | None
+
+
+@dataclass(frozen=True)
+class PortfolioSummary:
+    base_currency: str
+    total_holding_cost: float | None
+    allocations: list[PortfolioAllocation]
+    daily_investment_budget: float | None
+    usd_cash: float
+    usd_daily_spend: float | None
+    usd_coverage_days: float | None
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RiskAssessment:
+    score: int
+    level: str
+    explanations: list[str]
+
+
+@dataclass(frozen=True)
+class MarketEvidence:
+    symbol: str
+    latest: float | None
+    return_1d: float | None
+    return_5d: float | None
+    return_20d: float | None
+    structural_trend: str
+    short_term_state: str
+    detection_reason: str
+
+
+@dataclass(frozen=True)
+class StrategyRuleResult:
+    name: str
+    status: str
+    observed: str
+    threshold: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class ReportState:
+    executive_status: str
+    data_quality_status: str
+    macro_regime: str
+    risk_score: int
+    risk_level: str
+    triggered_rules: tuple[str, ...]
+    structural_trends: tuple[str, ...]
+    portfolio_gaps: tuple[str, ...]
 
 
 @dataclass(frozen=True)

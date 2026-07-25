@@ -30,4 +30,5 @@ def test_analyze_price_moves_calculates_returns_and_flags_unusual_move():
     assert signal.return_20d > 0.07
     assert signal.volume_ratio_20d == 3.0
     assert signal.is_unusual_move is True
-
+    assert signal.latest == 108
+    assert signal.latest_date == date(2026, 1, 22)

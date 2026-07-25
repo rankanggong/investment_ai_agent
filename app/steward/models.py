@@ -104,7 +104,8 @@ class StewardState:
 
 @dataclass(frozen=True)
 class PortfolioReportState:
-    """The non-cash steward state allowed to cross into the daily report."""
+    """The supplied steward state used by the daily report."""
 
     holdings: list[HoldingPosition]
     fx_conversions: list[FxConversion]
+    cash_positions: list[CashPosition] = field(default_factory=list)

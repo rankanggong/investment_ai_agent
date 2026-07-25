@@ -30,7 +30,11 @@ def collect_yfinance_prices(
 
     for index, symbol in enumerate(normalized_symbols):
         try:
-            history = loader(_yahoo_symbol(symbol), period)
+            history = _load_first_available_history(
+                loader,
+                _yahoo_symbols(symbol),
+                period,
+            )
             if history.empty:
                 failed_symbols.append(symbol)
                 failure_reasons[symbol] = "No price data returned"
@@ -58,10 +62,23 @@ def collect_yfinance_prices(
     )
 
 
-def _yahoo_symbol(symbol: str) -> str:
+def _yahoo_symbols(symbol: str) -> tuple[str, ...]:
     return {
-        "USD/CNH": "USDCNH=X",
-    }.get(symbol, symbol)
+        "USD/CNH": ("CNH=X", "USDCNH=X"),
+    }.get(symbol, (symbol,))
+
+
+def _load_first_available_history(
+    loader: HistoryLoader,
+    provider_symbols: tuple[str, ...],
+    period: str,
+):
+    history = None
+    for provider_symbol in provider_symbols:
+        history = loader(provider_symbol, period)
+        if not history.empty:
+            return history
+    return history
 
 
 def _load_history(symbol: str, period: str):

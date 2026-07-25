@@ -1,0 +1,12 @@
+{
+  "base_currency": "CNY",
+  "target_allocations": {},
+  "daily_investment_budget": null,
+  "usd_daily_spend": null,
+  "gpt_questions": [
+    "结构性趋势与短期反弹是否一致，哪些资产出现背离？",
+    "当前风险评分由哪些可验证证据驱动，什么变化会使评分下降？",
+    "USD/CNH、美元指数与利率数据是否改变换汇时点的观察条件？",
+    "在目标仓位与每日额度配置完整后，最大的配置缺口是什么？"
+  ]
+}

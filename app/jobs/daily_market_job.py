@@ -3,12 +3,22 @@ from pathlib import Path
 
 from app.analyzers.company_price_bounds_analyzer import analyze_company_price_bounds
 from app.analyzers.data_coverage_analyzer import analyze_data_coverage
+from app.analyzers.daily_report_state_analyzer import (
+    analyze_portfolio_summary,
+    assess_risk,
+    build_gpt_questions,
+    build_report_state,
+    compare_report_states,
+    evaluate_strategy_rules,
+    extract_report_state,
+    select_key_market_evidence,
+)
 from app.analyzers.daily_signal_summary_analyzer import analyze_daily_signal_summary
 from app.analyzers.macro_context_analyzer import analyze_macro_context
 from app.analyzers.price_move_analyzer import analyze_price_moves
 from app.analyzers.report_signal_analyzer import analyze_report_signals
 from app.analyzers.sector_rotation_analyzer import analyze_sector_rotation
-from app.config import load_watchlist
+from app.config import load_report_profile, load_watchlist
 from app.models.analysis import NewsQualityGate
 from app.outputs.markdown_writer import render_daily_report, write_daily_report
 from app.steward.models import PortfolioReportState
@@ -23,8 +33,10 @@ def generate_daily_report(
     report_dir: Path,
     report_date: date | None = None,
     steward_db_path: Path | None = None,
+    report_profile_path: Path | None = None,
 ) -> Path:
     watchlist = load_watchlist(watchlist_path)
+    report_profile = load_report_profile(report_profile_path)
     repo = PriceRepository(db_path)
     history = {symbol: repo.get_prices(symbol) for symbol in [asset.symbol for asset in watchlist.assets]}
     signals = analyze_price_moves(history)
@@ -37,7 +49,15 @@ def generate_daily_report(
     data_coverage = analyze_data_coverage(
         price_history=history,
         price_symbols=[asset.symbol for asset in watchlist.assets],
-        macro_symbols=["SPY", "TLT", "UUP", "HYG", "LQD", "GLD"],
+        macro_symbols=[
+            "SPY",
+            "TLT",
+            "UUP",
+            "HYG",
+            "LQD",
+            "GLD",
+            *watchlist.symbols_for_group("macro_actual"),
+        ],
         popular_company_symbols=watchlist.symbols_for_group("popular_companies"),
     )
     company_price_bounds = analyze_company_price_bounds(
@@ -74,8 +94,52 @@ def generate_daily_report(
         portfolio_state = PortfolioReportState(
             holdings=steward_state.holdings,
             fx_conversions=steward_state.fx_conversions,
+            cash_positions=steward_state.cash_positions,
         )
     effective_date = report_date or _latest_report_date(history) or date.today()
+    portfolio_summary = analyze_portfolio_summary(
+        portfolio_state,
+        report_profile,
+        signals,
+    )
+    key_evidence = select_key_market_evidence(signals)
+    risk_assessment = assess_risk(
+        signals,
+        sector_rotation,
+        macro_context,
+        data_coverage,
+    )
+    strategy_rules = evaluate_strategy_rules(
+        signals,
+        sector_rotation,
+        macro_context,
+        data_coverage,
+        portfolio_summary,
+        key_evidence,
+    )
+    report_state = build_report_state(
+        daily_signal_summary,
+        data_coverage,
+        macro_context,
+        risk_assessment,
+        strategy_rules,
+        key_evidence,
+        portfolio_summary,
+    )
+    report_repo = ReportRepository(db_path)
+    previous_state = extract_report_state(report_repo.get_latest_content("daily"))
+    changes = compare_report_states(previous_state, report_state)
+    gpt_questions = build_gpt_questions(
+        report_profile,
+        changes,
+        strategy_rules,
+        key_evidence,
+    )
+    price_sources = {
+        symbol: bars[-1].source
+        for symbol, bars in history.items()
+        if bars
+    }
     content = render_daily_report(
         report_date=effective_date,
         price_signals=signals,
@@ -87,12 +151,20 @@ def generate_daily_report(
         report_signals=report_signals,
         portfolio_state=portfolio_state,
         news_quality=news_quality,
+        portfolio_summary=portfolio_summary,
+        risk_assessment=risk_assessment,
+        key_evidence=key_evidence,
+        strategy_rules=strategy_rules,
+        changes=changes,
+        gpt_questions=gpt_questions,
+        report_state=report_state,
+        price_sources=price_sources,
     )
     path = write_daily_report(report_dir, effective_date, content)
-    ReportRepository(db_path).insert_report(
+    report_repo.insert_report(
         report_type="daily",
         report_date=effective_date,
-        title=f"Daily Market Brief - {effective_date.isoformat()}",
+        title=f"Daily Market State - {effective_date.isoformat()}",
         content=content,
     )
     return path

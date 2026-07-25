@@ -23,6 +23,7 @@ def test_cli_exposes_phase_1_commands():
     daily_args = parser.parse_args(["report", "daily"])
     assert daily_args.report_command == "daily"
     assert daily_args.steward_db == app.main.DEFAULT_STEWARD_DB_PATH
+    assert daily_args.report_profile == app.main.DEFAULT_REPORT_PROFILE_PATH
 
 
 def test_cli_does_not_expose_news_collection():

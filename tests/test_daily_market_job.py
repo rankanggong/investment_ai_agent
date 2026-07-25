@@ -7,7 +7,7 @@ from app.steward.storage import StewardRepository, initialize_steward_database
 from app.storage.db import initialize_database
 
 
-def test_daily_market_report_loads_holdings_and_fx_but_not_cash_from_steward(tmp_path):
+def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path):
     finance_db = tmp_path / "finance.db"
     steward_db = tmp_path / "steward.db"
     report_dir = tmp_path / "reports"
@@ -61,9 +61,10 @@ def test_daily_market_report_loads_holdings_and_fx_but_not_cash_from_steward(tmp
     )
 
     content = path.read_text(encoding="utf-8")
-    assert "## Portfolio Holdings" in content
+    assert "## 2. Portfolio Summary" in content
+    assert "| VOO | CNY 30.00 | 100.00% | N/A | N/A | N/A |" in content
+    assert "### B. Account Detail" in content
     assert "| broker | fund | VOO | Vanguard S&P 500 ETF |" in content
-    assert "## FX Conversions" in content
+    assert "#### FX Conversions" in content
     assert "| 2026-07-15 | bank / usd | CNY 13587.60 | USD 2000.00 |" in content
-    assert "9000" not in content
-    assert "Cash Positions" not in content
+    assert "| bank | cash | USD | 9000 | 2026-07-19 |" in content

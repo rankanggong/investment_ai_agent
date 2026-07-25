@@ -31,6 +31,13 @@ def analyze_macro_context(signals: dict[str, PriceSignal]) -> MacroContext:
 
 
 def _rates_context(signals: dict[str, PriceSignal]) -> str:
+    treasury_yield = _return_5d(signals, "^TNX")
+    if treasury_yield is not None:
+        if treasury_yield > 0.015:
+            return "rates_pressure"
+        if treasury_yield < -0.015:
+            return "duration_supported"
+        return "mixed"
     tlt = _return_5d(signals, "TLT")
     if tlt is None:
         return "unknown"
@@ -42,6 +49,13 @@ def _rates_context(signals: dict[str, PriceSignal]) -> str:
 
 
 def _usd_context(signals: dict[str, PriceSignal]) -> str:
+    dollar_index = _return_5d(signals, "DX-Y.NYB")
+    if dollar_index is not None:
+        if dollar_index > 0.01:
+            return "usd_strengthening"
+        if dollar_index < -0.01:
+            return "usd_weakening"
+        return "mixed"
     uup = _return_5d(signals, "UUP")
     if uup is None:
         return "unknown"
@@ -163,13 +177,13 @@ def _evidence_rows(
         MacroEvidenceRow(
             area="Rates",
             signal=rates_context,
-            evidence=f"TLT 5D {_format_percent(_return_5d(signals, 'TLT'))}",
+            evidence=_rates_evidence(signals),
             interpretation=_interpretation(rates_context),
         ),
         MacroEvidenceRow(
             area="USD",
             signal=usd_context,
-            evidence=f"UUP 5D {_format_percent(_return_5d(signals, 'UUP'))}",
+            evidence=_usd_evidence(signals),
             interpretation=_interpretation(usd_context),
         ),
         MacroEvidenceRow(
@@ -197,6 +211,30 @@ def _evidence_rows(
             interpretation=_interpretation(overall_regime),
         ),
     ]
+
+
+def _rates_evidence(signals: dict[str, PriceSignal]) -> str:
+    treasury_yield = signals.get("^TNX")
+    if treasury_yield is not None:
+        return (
+            f"US 10Y yield {_format_level(treasury_yield.latest)}; "
+            f"5D {_format_percent(treasury_yield.return_5d)}"
+        )
+    return f"TLT 5D {_format_percent(_return_5d(signals, 'TLT'))}"
+
+
+def _usd_evidence(signals: dict[str, PriceSignal]) -> str:
+    dollar_index = signals.get("DX-Y.NYB")
+    if dollar_index is not None:
+        return (
+            f"US Dollar Index {_format_level(dollar_index.latest)}; "
+            f"5D {_format_percent(dollar_index.return_5d)}"
+        )
+    return f"UUP proxy 5D {_format_percent(_return_5d(signals, 'UUP'))}"
+
+
+def _format_level(value: float | None) -> str:
+    return "N/A" if value is None else f"{value:.2f}"
 
 
 def _format_percent(value: float | None) -> str:

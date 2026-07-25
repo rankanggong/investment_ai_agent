@@ -18,3 +18,16 @@ class ReportRepository:
                 (report_type, report_date.isoformat(), title, content),
             )
 
+    def get_latest_content(self, report_type: str) -> str | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT content_markdown
+                FROM reports
+                WHERE report_type = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (report_type,),
+            ).fetchone()
+        return None if row is None else str(row["content_markdown"])
