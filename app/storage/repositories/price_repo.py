@@ -67,3 +67,33 @@ class PriceRepository:
             for row in rows
         ]
 
+    def get_history_coverage(
+        self,
+        symbol: str,
+    ) -> tuple[int, date | None, date | None]:
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT
+                  COUNT(DISTINCT date) AS row_count,
+                  MIN(date) AS earliest_date,
+                  MAX(date) AS latest_date
+                FROM prices
+                WHERE symbol = ?
+                """,
+                (symbol.upper(),),
+            ).fetchone()
+
+        return (
+            int(row["row_count"]),
+            (
+                date.fromisoformat(row["earliest_date"])
+                if row["earliest_date"] is not None
+                else None
+            ),
+            (
+                date.fromisoformat(row["latest_date"])
+                if row["latest_date"] is not None
+                else None
+            ),
+        )

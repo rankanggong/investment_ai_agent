@@ -1,9 +1,13 @@
 import argparse
+from datetime import date
 import os
 from pathlib import Path
 
 from app.collectors.price_collector import load_price_csv
-from app.collectors.yfinance_price_collector import collect_yfinance_prices
+from app.collectors.yfinance_price_collector import (
+    choose_yfinance_period,
+    collect_yfinance_prices,
+)
 from app.config import load_watchlist
 from app.jobs.daily_market_job import generate_daily_report
 from app.steward.job import (
@@ -44,6 +48,13 @@ def build_parser() -> argparse.ArgumentParser:
     prices.add_argument("--source", default="csv")
     prices.add_argument("--symbols", nargs="+")
     prices.add_argument("--watchlist", type=Path, default=DEFAULT_WATCHLIST_PATH)
+    prices.add_argument(
+        "--period",
+        help=(
+            "Force one Yahoo history period for every symbol, such as 5d or 1y. "
+            "By default the collector chooses an incremental period per symbol."
+        ),
+    )
 
     report = subparsers.add_parser("report", help="Generate reports")
     report_subparsers = report.add_subparsers(dest="report_command", required=True)
@@ -111,7 +122,31 @@ def main(argv: list[str] | None = None) -> int:
                 if args.symbols
                 else [asset.symbol for asset in load_watchlist(args.watchlist).assets]
             )
-            collection = collect_yfinance_prices(symbols)
+            price_repo = PriceRepository(args.db)
+            periods_by_symbol = None
+            if args.period is None:
+                periods_by_symbol = {
+                    symbol: choose_yfinance_period(
+                        *price_repo.get_history_coverage(symbol),
+                        as_of_date=date.today(),
+                    )
+                    for symbol in symbols
+                }
+                plan_counts: dict[str, int] = {}
+                for collection_period in periods_by_symbol.values():
+                    plan_counts[collection_period] = (
+                        plan_counts.get(collection_period, 0) + 1
+                    )
+                plan = ", ".join(
+                    f"{collection_period}: {count}"
+                    for collection_period, count in sorted(plan_counts.items())
+                )
+                print(f"Yahoo collection plan: {plan}")
+            collection = collect_yfinance_prices(
+                symbols,
+                period=args.period or "1y",
+                periods_by_symbol=periods_by_symbol,
+            )
             bars = collection.bars
             failed_symbols = collection.failed_symbols
             failure_reasons = collection.failure_reasons

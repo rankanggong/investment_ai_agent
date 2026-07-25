@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import app.main
@@ -20,6 +20,7 @@ def test_cli_exposes_phase_1_commands():
     live_args = parser.parse_args(["collect", "prices", "--yfinance"])
     assert live_args.yfinance is True
     assert live_args.symbols is None
+    assert live_args.period is None
     daily_args = parser.parse_args(["report", "daily"])
     assert daily_args.report_command == "daily"
     assert daily_args.steward_db == app.main.DEFAULT_STEWARD_DB_PATH
@@ -131,8 +132,11 @@ def test_yfinance_collection_uses_watchlist_and_reports_failures(
     db_path = tmp_path / "finance.db"
     received_symbols = []
 
-    def collect(symbols):
+    received_periods = {}
+
+    def collect(symbols, period, periods_by_symbol):
         received_symbols.extend(symbols)
+        received_periods.update(periods_by_symbol)
         return YFinanceCollectionResult(
             bars=[
                 PriceBar(
@@ -167,6 +171,7 @@ def test_yfinance_collection_uses_watchlist_and_reports_failures(
 
     assert result == 0
     assert received_symbols == ["SPY", "QQQ"]
+    assert received_periods == {"SPY": "1y", "QQQ": "1y"}
     assert len(PriceRepository(db_path).get_prices("SPY")) == 1
     output = capsys.readouterr().out
     assert "Failed symbols: QQQ" in output
@@ -181,7 +186,7 @@ def test_yfinance_collection_uses_watchlist_and_reports_failures(
 def test_yfinance_collection_uses_explicit_symbols(tmp_path, monkeypatch):
     received_symbols = []
 
-    def collect(symbols):
+    def collect(symbols, **kwargs):
         received_symbols.extend(symbols)
         return YFinanceCollectionResult(bars=[], failed_symbols=[], failure_reasons={})
 
@@ -201,3 +206,83 @@ def test_yfinance_collection_uses_explicit_symbols(tmp_path, monkeypatch):
     )
 
     assert received_symbols == ["SPY", "QQQ"]
+
+
+def test_yfinance_collection_can_force_one_period(tmp_path, monkeypatch):
+    received = {}
+
+    def collect(symbols, period, periods_by_symbol):
+        received.update(
+            symbols=list(symbols),
+            period=period,
+            periods_by_symbol=periods_by_symbol,
+        )
+        return YFinanceCollectionResult(bars=[], failed_symbols=[], failure_reasons={})
+
+    monkeypatch.setattr(app.main, "collect_yfinance_prices", collect)
+
+    app.main.main(
+        [
+            "collect",
+            "prices",
+            "--yfinance",
+            "--symbols",
+            "SPY",
+            "--period",
+            "1y",
+            "--db",
+            str(tmp_path / "finance.db"),
+        ]
+    )
+
+    assert received == {
+        "symbols": ["SPY"],
+        "period": "1y",
+        "periods_by_symbol": None,
+    }
+
+
+def test_yfinance_collection_uses_short_window_for_complete_history(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "finance.db"
+    app.main.initialize_database(db_path)
+    as_of_date = date.today()
+    PriceRepository(db_path).upsert_many(
+        [
+            PriceBar(
+                symbol="SPY",
+                date=as_of_date - timedelta(days=(199 - index) * 2),
+                open=100,
+                high=101,
+                low=99,
+                close=100,
+                adjusted_close=100,
+                volume=1000,
+                source="test",
+            )
+            for index in range(200)
+        ]
+    )
+    received_periods = {}
+
+    def collect(symbols, period, periods_by_symbol):
+        received_periods.update(periods_by_symbol)
+        return YFinanceCollectionResult(bars=[], failed_symbols=[], failure_reasons={})
+
+    monkeypatch.setattr(app.main, "collect_yfinance_prices", collect)
+
+    app.main.main(
+        [
+            "collect",
+            "prices",
+            "--yfinance",
+            "--symbols",
+            "SPY",
+            "--db",
+            str(db_path),
+        ]
+    )
+
+    assert received_periods == {"SPY": "5d"}

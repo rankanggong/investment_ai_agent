@@ -50,12 +50,18 @@ CSV imports require these columns:
 symbol,date,open,high,low,close,adjusted_close,volume
 ```
 
-Live collection fetches one year of daily history for every asset in
-`config/watchlist.yaml`. To collect only selected symbols:
+Live collection updates every asset in `config/watchlist.yaml`. To collect only
+selected symbols:
 
 ```bash
 python -m app.main collect prices --yfinance --symbols SPY QQQ
 ```
+
+Yahoo collection is incremental by default. Symbols with fewer than 200 daily
+rows or less than 330 calendar days of history receive a one-year backfill.
+Symbols with complete history normally refresh only the latest five trading
+days; a stale symbol automatically receives a wider window so missed dates are
+filled. Use `--period 1y` to force a full one-year refresh.
 
 Successful symbols are saved even when another symbol fails. Failed symbols are
 listed in the command output.

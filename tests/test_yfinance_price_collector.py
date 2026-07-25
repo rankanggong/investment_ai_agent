@@ -2,7 +2,11 @@ from datetime import date, datetime
 import sys
 from types import SimpleNamespace
 
-from app.collectors.yfinance_price_collector import _load_history, collect_yfinance_prices
+from app.collectors.yfinance_price_collector import (
+    _load_history,
+    choose_yfinance_period,
+    collect_yfinance_prices,
+)
 
 
 class FakeHistory:
@@ -67,6 +71,46 @@ def test_collect_yfinance_prices_translates_usd_cnh_for_yahoo():
     assert calls == [("CNH=X", "1y")]
     assert result.failed_symbols == []
     assert [bar.symbol for bar in result.bars] == ["USD/CNH"]
+
+
+def test_collect_yfinance_prices_uses_period_planned_for_each_symbol():
+    calls = []
+
+    def load_history(symbol, period):
+        calls.append((symbol, period))
+        return FakeHistory([(date(2026, 6, 9), {"Close": 100})])
+
+    collect_yfinance_prices(
+        ["SPY", "QQQ"],
+        periods_by_symbol={"SPY": "5d", "QQQ": "1y"},
+        history_loader=load_history,
+    )
+
+    assert calls == [("SPY", "5d"), ("QQQ", "1y")]
+
+
+def test_choose_yfinance_period_backfills_then_uses_overlapping_increment():
+    as_of_date = date(2026, 7, 25)
+
+    assert choose_yfinance_period(0, None, None, as_of_date) == "1y"
+    assert (
+        choose_yfinance_period(
+            250,
+            date(2025, 7, 24),
+            date(2026, 7, 24),
+            as_of_date,
+        )
+        == "5d"
+    )
+    assert (
+        choose_yfinance_period(
+            250,
+            date(2025, 6, 1),
+            date(2026, 7, 10),
+            as_of_date,
+        )
+        == "1mo"
+    )
 
 
 def test_collect_yfinance_prices_falls_back_when_primary_yahoo_symbol_is_empty():

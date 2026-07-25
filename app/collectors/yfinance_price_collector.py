@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 import math
@@ -20,6 +20,7 @@ class YFinanceCollectionResult:
 def collect_yfinance_prices(
     symbols: Iterable[str],
     period: str = "1y",
+    periods_by_symbol: Mapping[str, str] | None = None,
     history_loader: HistoryLoader | None = None,
 ) -> YFinanceCollectionResult:
     loader = history_loader or _load_history
@@ -29,11 +30,16 @@ def collect_yfinance_prices(
     failure_reasons: dict[str, str] = {}
 
     for index, symbol in enumerate(normalized_symbols):
+        symbol_period = (
+            periods_by_symbol.get(symbol, period)
+            if periods_by_symbol is not None
+            else period
+        )
         try:
             history = _load_first_available_history(
                 loader,
                 _yahoo_symbols(symbol),
-                period,
+                symbol_period,
             )
             if history.empty:
                 failed_symbols.append(symbol)
@@ -60,6 +66,33 @@ def collect_yfinance_prices(
         failed_symbols=failed_symbols,
         failure_reasons=failure_reasons,
     )
+
+
+def choose_yfinance_period(
+    row_count: int,
+    earliest_date: date | None,
+    latest_date: date | None,
+    as_of_date: date,
+) -> str:
+    """Choose a backfill or overlapping incremental window for one symbol."""
+    if (
+        row_count < 200
+        or earliest_date is None
+        or latest_date is None
+        or (latest_date - earliest_date).days < 330
+    ):
+        return "1y"
+
+    lag_days = max((as_of_date - latest_date).days, 0)
+    if lag_days <= 3:
+        return "5d"
+    if lag_days <= 20:
+        return "1mo"
+    if lag_days <= 70:
+        return "3mo"
+    if lag_days <= 160:
+        return "6mo"
+    return "1y"
 
 
 def _yahoo_symbols(symbol: str) -> tuple[str, ...]:

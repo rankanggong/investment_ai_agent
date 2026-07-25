@@ -58,6 +58,11 @@ def test_price_repository_upserts_and_reads_prices(tmp_path):
     assert len(bars) == 2
     assert bars[-1].close == 104
     assert bars[-1].volume == 1700
+    assert repo.get_history_coverage("SPY") == (
+        2,
+        date(2026, 5, 14),
+        date(2026, 5, 15),
+    )
 
 
 def test_report_repository_reads_latest_report_before_current_date(tmp_path):
