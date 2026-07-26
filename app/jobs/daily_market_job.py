@@ -8,9 +8,10 @@ from app.analyzers.daily_report_state_analyzer import (
     analyze_market_breadth,
     analyze_portfolio_summary,
     assess_market_risk,
-    assess_portfolio_risk,
+    assess_portfolio_decision_risk,
     build_gpt_tasks,
     build_report_state,
+    build_report_use_states,
     combine_data_quality,
     compare_report_states,
     evaluate_strategy_rules,
@@ -119,22 +120,30 @@ def generate_daily_report(
         signals,
         market_breadth,
     )
-    portfolio_risk = assess_portfolio_risk(portfolio_summary)
+    portfolio_decision_risk = assess_portfolio_decision_risk(portfolio_summary)
     fx_costs = analyze_fx_costs(portfolio_state, history.get("USD/CNH", []))
+    use_states = build_report_use_states(
+        market_risk,
+        macro_context,
+        sector_rotation,
+        data_coverage,
+        portfolio_summary,
+        portfolio_decision_risk,
+        news_quality,
+        report_profile,
+        fx_costs,
+    )
     strategy_rules = evaluate_strategy_rules(
         signals,
         sector_rotation,
-        macro_context,
-        data_coverage,
         portfolio_summary,
         key_evidence,
+        use_states,
     )
     report_state = build_report_state(
-        daily_signal_summary,
-        data_coverage,
-        macro_context,
+        use_states,
         market_risk,
-        portfolio_risk,
+        portfolio_decision_risk,
         strategy_rules,
         key_evidence,
         portfolio_summary,
@@ -150,6 +159,7 @@ def generate_daily_report(
         changes,
         strategy_rules,
         key_evidence,
+        use_states,
     )
     price_sources = {
         symbol: bars[-1].source
@@ -169,7 +179,8 @@ def generate_daily_report(
         news_quality=news_quality,
         portfolio_summary=portfolio_summary,
         risk_assessment=market_risk,
-        portfolio_risk=portfolio_risk,
+        portfolio_decision_risk=portfolio_decision_risk,
+        use_states=use_states,
         market_breadth=market_breadth,
         fx_costs=fx_costs,
         key_evidence=key_evidence,

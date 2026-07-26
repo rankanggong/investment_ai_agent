@@ -6,20 +6,28 @@ import json
 
 from app.config import ReportProfile
 from app.models.analysis import (
+    CapabilityState,
     DataCoverage,
     DataCoverageRow,
-    DailySignalSummary,
+    DataQualityState,
     FxCostComparison,
     GptAnalysisTask,
     MarketBreadth,
     MarketEvidence,
+    MarketState,
     MacroContext,
     NewsQualityGate,
+    NewsState,
     PortfolioAllocation,
+    PortfolioDecisionState,
+    PortfolioRiskAssessment,
     PortfolioSummary,
     PriceSignal,
+    ReportCapabilities,
     ReportState,
+    ReportUseStates,
     RiskAssessment,
+    RiskAssetAlert,
     RiskClusterAssessment,
     SectorRotation,
     StrategyRuleResult,
@@ -93,7 +101,13 @@ def analyze_portfolio_summary(
 
     total = sum(values.values())
     allocations = _allocations(values, total, profile.target_allocations)
-    cash_by_role = {"investable": 0.0, "reserved": 0.0, "unclassified": 0.0}
+    cash_by_role = {
+        "investment_cash": 0.0,
+        "investment_source": 0.0,
+        "reserved": 0.0,
+        "emergency": 0.0,
+        "unknown": 0.0,
+    }
     for position in portfolio_state.cash_positions:
         rate = fx_rates.get(position.currency)
         if rate is not None:
@@ -102,7 +116,8 @@ def analyze_portfolio_summary(
     usd_cash = sum(
         float(position.balance)
         for position in portfolio_state.cash_positions
-        if position.currency == "USD" and position.cash_role == "investable"
+        if position.currency == "USD"
+        and position.cash_role == "investment_cash"
     )
     coverage = (
         usd_cash / profile.usd_daily_spend
@@ -112,8 +127,8 @@ def analyze_portfolio_summary(
     snapshot_status = _portfolio_snapshot_status(portfolio_state, report_date)
     if not profile.target_allocations:
         notes.append("Target allocations are not configured.")
-    if cash_by_role["unclassified"]:
-        notes.append("Unclassified cash is excluded from investable cash.")
+    if cash_by_role["unknown"]:
+        notes.append("Unknown-role cash is excluded from investment cash.")
     return PortfolioSummary(
         base_currency=profile.base_currency,
         total_holding_cost=total,
@@ -122,9 +137,11 @@ def analyze_portfolio_summary(
         usd_cash=usd_cash,
         usd_daily_spend=profile.usd_daily_spend,
         usd_coverage_days=coverage,
-        investable_cash=cash_by_role["investable"],
+        investment_cash=cash_by_role["investment_cash"],
+        investment_source_cash=cash_by_role["investment_source"],
         reserved_cash=cash_by_role["reserved"],
-        unclassified_cash=cash_by_role["unclassified"],
+        emergency_cash=cash_by_role["emergency"],
+        unknown_cash=cash_by_role["unknown"],
         snapshot_status=snapshot_status,
         notes=_deduplicate(notes),
     )
@@ -147,7 +164,11 @@ def combine_data_quality(
                 "insufficient",
                 len(price_rows) - len(below_200),
                 "N/A",
-                f"{len(below_200)} configured assets have fewer than 200 rows.",
+                (
+                    f"{len(below_200)} configured "
+                    f"{'asset has' if len(below_200) == 1 else 'assets have'} "
+                    "fewer than 200 rows."
+                ),
             )
         )
     if news_quality and news_quality.status in {"disabled", "data_quality_review"}:
@@ -187,19 +208,19 @@ def combine_data_quality(
                 f"Snapshots older than {PORTFOLIO_STALE_DAYS} days are stale.",
             )
         )
-        unclassified = sum(
-            position.cash_role == "unclassified"
+        unknown_roles = sum(
+            position.cash_role == "unknown"
             for position in portfolio_state.cash_positions
         )
-        if unclassified:
+        if unknown_roles:
             rows.append(
                 DataCoverageRow(
                     "Portfolio",
                     "cash roles",
                     "degraded",
-                    unclassified,
+                    unknown_roles,
                     "N/A",
-                    f"{unclassified} cash positions are unclassified.",
+                    f"{unknown_roles} cash positions have an unknown role.",
                 )
             )
     status = _overall_quality_status(rows)
@@ -208,8 +229,6 @@ def combine_data_quality(
         for impact in market_coverage.impacts
         if "No data coverage gaps" not in impact
     ]
-    if status != "available":
-        impacts.append(f"Overall report data quality is {status}.")
     return DataCoverage(rows=rows, impacts=_deduplicate(impacts), status=status)
 
 
@@ -283,6 +302,7 @@ def assess_market_risk(
     breadth: MarketBreadth,
 ) -> RiskAssessment:
     cluster_results: list[RiskClusterAssessment] = []
+    single_asset_alerts: list[RiskAssetAlert] = []
     for cluster, symbols in RISK_CLUSTERS.items():
         triggered = [
             signal for symbol, signal in price_signals.items()
@@ -292,18 +312,32 @@ def assess_market_risk(
             continue
         severity = max(_signal_severity(signal) for signal in triggered)
         points = min(10, max(1, round(severity * 5)))
-        cluster_results.append(
-            RiskClusterAssessment(
-                cluster=cluster,
-                symbols=tuple(sorted(signal.symbol for signal in triggered)),
-                severity=severity,
-                points=points,
-                evidence_refs=tuple(
-                    sorted(_evidence_ref(signal) for signal in triggered)
-                ),
+        if len(triggered) >= 2:
+            cluster_results.append(
+                RiskClusterAssessment(
+                    cluster=cluster,
+                    symbols=tuple(sorted(signal.symbol for signal in triggered)),
+                    severity=severity,
+                    points=points,
+                    evidence_refs=tuple(
+                        sorted(_evidence_ref(signal) for signal in triggered)
+                    ),
+                )
             )
-        )
-    cluster_points = sum(item.points for item in cluster_results)
+        else:
+            signal = triggered[0]
+            single_asset_alerts.append(
+                RiskAssetAlert(
+                    symbol=signal.symbol,
+                    category=cluster,
+                    severity=severity,
+                    points=points,
+                    evidence_ref=_evidence_ref(signal),
+                )
+            )
+    unusual_move_points = sum(item.points for item in cluster_results) + sum(
+        item.points for item in single_asset_alerts
+    )
     breadth_points = 0
     if breadth.above_50d_share is not None:
         breadth_points += round(max(0.0, 0.5 - breadth.above_50d_share) * 20)
@@ -315,10 +349,11 @@ def assess_market_risk(
         vix_points = 15 if breadth.vix_level >= 30 else 8 if breadth.vix_level >= 20 else 0
     if breadth.vix_percentile is not None and breadth.vix_percentile >= 0.90:
         vix_points = max(vix_points, 12)
-    score = min(100, cluster_points + breadth_points + vix_points)
+    score = min(100, unusual_move_points + breadth_points + vix_points)
     explanations = [
-        f"Unusual-move risk: {len(cluster_results)} risk clusters, "
-        f"{cluster_points} points; correlated assets count once per cluster.",
+        f"Unusual-move risk: {len(single_asset_alerts)} single-asset alerts and "
+        f"{len(cluster_results)} correlated clusters, {unusual_move_points} "
+        "points; correlated assets count once per cluster.",
         f"Tracked-universe breadth: {breadth_points} points.",
         f"VIX level/percentile: {vix_points} points.",
         f"Total market risk: {score}/100.",
@@ -329,10 +364,13 @@ def assess_market_risk(
         explanations=explanations,
         scope="market",
         clusters=cluster_results,
+        single_asset_alerts=single_asset_alerts,
     )
 
 
-def assess_portfolio_risk(summary: PortfolioSummary) -> RiskAssessment:
+def assess_portfolio_decision_risk(
+    summary: PortfolioSummary,
+) -> PortfolioRiskAssessment:
     gaps = [
         abs(item.weight_gap)
         for item in summary.allocations
@@ -345,8 +383,14 @@ def assess_portfolio_risk(summary: PortfolioSummary) -> RiskAssessment:
         default=0.0,
     )
     concentration_points = min(15, round(max(0.0, max_weight - 0.5) * 50))
-    stale_points = 25 if summary.snapshot_status == "stale" else 0
-    unclassified_points = 20 if (summary.unclassified_cash or 0) > 0 else 0
+    stale_points = (
+        40
+        if summary.snapshot_status == "unavailable"
+        else 25
+        if summary.snapshot_status == "stale"
+        else 0
+    )
+    unknown_role_points = 20 if (summary.unknown_cash or 0) > 0 else 0
     coverage_points = (
         15
         if summary.usd_coverage_days is not None
@@ -356,24 +400,191 @@ def assess_portfolio_risk(summary: PortfolioSummary) -> RiskAssessment:
         and summary.usd_coverage_days < 120
         else 0
     )
-    score = min(
-        100,
-        gap_points + concentration_points + stale_points
-        + unclassified_points + coverage_points,
+    exposure_score = min(
+        100, gap_points + concentration_points + coverage_points
     )
-    return RiskAssessment(
-        score=score,
-        level=_risk_level(score),
-        scope="portfolio",
-        explanations=[
+    data_quality_score = min(100, stale_points + unknown_role_points)
+    readiness_reasons: list[str] = []
+    if summary.snapshot_status in {"stale", "unavailable"}:
+        readiness_reasons.append(
+            "portfolio snapshots are unavailable"
+            if summary.snapshot_status == "unavailable"
+            else "portfolio snapshots are stale"
+        )
+    if (summary.unknown_cash or 0) > 0:
+        readiness_reasons.append("cash roles are unknown")
+    return PortfolioRiskAssessment(
+        exposure_risk=RiskAssessment(
+            score=exposure_score,
+            level=_risk_level(exposure_score),
+            scope="portfolio_exposure",
+            explanations=[
             f"Target-allocation gap: {gap_points} points.",
             f"Invested-holdings concentration: {concentration_points} points.",
+                f"USD coverage: {coverage_points} points.",
+                f"Total portfolio exposure risk: {exposure_score}/100.",
+            ],
+        ),
+        data_quality_risk=RiskAssessment(
+            score=data_quality_score,
+            level=_risk_level(data_quality_score),
+            scope="portfolio_data_quality",
+            explanations=[
             f"Stale portfolio snapshots: {stale_points} points.",
-            f"Unclassified cash: {unclassified_points} points.",
-            f"USD coverage: {coverage_points} points.",
-            f"Total portfolio risk: {score}/100.",
-        ],
+                f"Unknown cash roles: {unknown_role_points} points.",
+                f"Total portfolio data-quality risk: {data_quality_score}/100.",
+            ],
+        ),
+        decision_readiness="blocked" if readiness_reasons else "ready",
+        readiness_reasons=tuple(readiness_reasons),
     )
+
+
+def build_report_use_states(
+    market_risk: RiskAssessment,
+    macro_context: MacroContext | None,
+    sector_rotation: SectorRotation,
+    data_coverage: DataCoverage | None,
+    portfolio_summary: PortfolioSummary,
+    portfolio_decision_risk: PortfolioRiskAssessment,
+    news_quality: NewsQualityGate | None,
+    profile: ReportProfile | None = None,
+    fx_costs: list[FxCostComparison] | None = None,
+) -> ReportUseStates:
+    spy_row = next(
+        (
+            row
+            for row in (data_coverage.rows if data_coverage else [])
+            if row.category == "Prices" and row.item == "SPY"
+        ),
+        None,
+    )
+    market_available = (
+        (spy_row is None or spy_row.status == "available")
+        and market_risk.level != "unknown"
+    )
+    market_actionability = "available" if market_available else "blocked"
+    market_reason = (
+        "Core price, breadth, and volatility evidence support market analysis."
+        if market_available
+        else "Core price evidence is insufficient for market analysis."
+    )
+
+    portfolio_reasons = list(portfolio_decision_risk.readiness_reasons)
+    portfolio_readiness = portfolio_decision_risk.decision_readiness
+    portfolio_analysis_status = (
+        "blocked"
+        if portfolio_summary.snapshot_status == "unavailable"
+        else "limited"
+        if portfolio_reasons
+        else "available"
+    )
+    action_reasons = list(portfolio_reasons)
+    if profile is not None and not profile.target_allocations:
+        action_reasons.append("target allocations are not configured")
+    if profile is not None and profile.daily_investment_budget is None:
+        action_reasons.append("daily investment budget is not configured")
+    portfolio_actionability = "blocked" if action_reasons else "available"
+    portfolio_risk = (
+        "unknown"
+        if portfolio_readiness == "blocked"
+        else portfolio_decision_risk.exposure_risk.level
+    )
+
+    macro_available = (
+        macro_context is not None and macro_context.overall_regime != "unknown"
+    )
+    macro_status = "available" if macro_available else "blocked"
+    macro_reasons = () if macro_available else ("macro regime is unavailable",)
+
+    if fx_costs is None:
+        fx_status = "degraded"
+        fx_reasons = ("FX comparison state was not evaluated",)
+    elif not fx_costs:
+        fx_status = "blocked"
+        fx_reasons = ("no comparable CNY/USD conversion is available",)
+    elif any(item.spot_rate is None for item in fx_costs):
+        fx_status = "degraded"
+        fx_reasons = ("USD/CNH spot is unavailable for one or more conversions",)
+    else:
+        fx_status = "available"
+        fx_reasons = ()
+
+    news_blocked = (
+        news_quality is None
+        or news_quality.status in {"disabled", "data_quality_review"}
+    )
+    news_state = NewsState(
+        quality="blocked" if news_blocked else "available",
+        actionability="unavailable" if news_blocked else "available",
+        reason=(
+            "; ".join(news_quality.reasons)
+            if news_quality is not None and news_quality.reasons
+            else (
+                "News evidence is not available."
+                if news_blocked
+                else "News evidence passed its quality gate."
+            )
+        ),
+    )
+    news_reasons = (
+        tuple(news_quality.reasons)
+        if news_quality is not None and news_quality.reasons
+        else ("news evidence is unavailable",)
+        if news_blocked
+        else ()
+    )
+    capabilities = ReportCapabilities(
+        market_analysis=CapabilityState(
+            market_actionability,
+            () if market_available else (market_reason,),
+        ),
+        macro_analysis=CapabilityState(macro_status, macro_reasons),
+        portfolio_analysis=CapabilityState(
+            portfolio_analysis_status,
+            tuple(portfolio_reasons),
+        ),
+        investment_action=CapabilityState(
+            portfolio_actionability,
+            tuple(action_reasons),
+        ),
+        fx_analysis=CapabilityState(fx_status, fx_reasons),
+        news_analysis=CapabilityState(
+            "blocked" if news_blocked else "available",
+            news_reasons,
+        ),
+    )
+    overall_status = data_coverage.status if data_coverage else "blocked"
+    return ReportUseStates(
+        market=MarketState(
+            risk=market_risk.level,
+            regime=_market_state_regime(macro_context, sector_rotation),
+            actionability=market_actionability,
+            reason=market_reason,
+        ),
+        portfolio=PortfolioDecisionState(
+            risk=portfolio_risk,
+            data_readiness=portfolio_readiness,
+            actionability=portfolio_actionability,
+            reason=(
+                "Portfolio decision readiness is blocked because "
+                + " and ".join(action_reasons)
+                + "."
+                if action_reasons
+                else "Portfolio inputs support portfolio-specific analysis."
+            ),
+        ),
+        news=news_state,
+        data_quality=DataQualityState(
+            overall=CapabilityState(overall_status),
+            capabilities=capabilities,
+        ),
+    )
+
+
+def assess_portfolio_risk(summary: PortfolioSummary) -> PortfolioRiskAssessment:
+    """Backward-compatible alias for the split portfolio risk assessment."""
+    return assess_portfolio_decision_risk(summary)
 
 
 def analyze_fx_costs(
@@ -417,21 +628,46 @@ def analyze_fx_costs(
 def evaluate_strategy_rules(
     price_signals: dict[str, PriceSignal],
     sector_rotation: SectorRotation,
-    macro_context: MacroContext | None,
-    data_coverage: DataCoverage | None,
     portfolio_summary: PortfolioSummary,
     evidence: list[MarketEvidence],
+    use_states: ReportUseStates,
 ) -> list[StrategyRuleResult]:
     results: list[StrategyRuleResult] = []
-    if data_coverage is None or data_coverage.status != "available":
+    if use_states.market.actionability != "available":
         results.append(
             StrategyRuleResult(
-                "Data quality circuit breaker",
+                "Market analysis readiness gate",
                 "triggered",
-                data_coverage.status if data_coverage else "unavailable",
-                "Overall quality != available",
-                "A required report module is blocked, stale, or degraded.",
-                evidence_refs=("DQ:OVERALL",),
+                use_states.market.actionability,
+                "Market actionability must be available",
+                use_states.market.reason,
+                evidence_refs=("STATE:MARKET", "DQ:MARKET"),
+            )
+        )
+    if use_states.portfolio.actionability != "available":
+        results.append(
+            StrategyRuleResult(
+                "Portfolio decision readiness gate",
+                "triggered",
+                use_states.portfolio.data_readiness,
+                "Portfolio data readiness and actionability must be available",
+                use_states.portfolio.reason,
+                evidence_refs=(
+                    "STATE:PORTFOLIO",
+                    "DQ:PORTFOLIO:SNAPSHOT",
+                    "DQ:PORTFOLIO:CASH_ROLES",
+                ),
+            )
+        )
+    if use_states.news.actionability != "available":
+        results.append(
+            StrategyRuleResult(
+                "News causal-analysis availability gate",
+                "triggered",
+                use_states.news.actionability,
+                "News quality and actionability must be available",
+                use_states.news.reason,
+                evidence_refs=("STATE:NEWS", "DQ:NEWS"),
             )
         )
     for cluster, symbols in RISK_CLUSTERS.items():
@@ -442,9 +678,14 @@ def evaluate_strategy_rules(
         if not triggered:
             continue
         strongest = max(triggered, key=_signal_severity)
+        is_cluster = len(triggered) >= 2
         results.append(
             StrategyRuleResult(
-                f"Unusual move cluster: {cluster}",
+                (
+                    f"Unusual move cluster: {cluster}"
+                    if is_cluster
+                    else f"Single-asset unusual move: {strongest.symbol}"
+                ),
                 "triggered",
                 ", ".join(sorted(signal.symbol for signal in triggered)),
                 "z ≥ 2.0, ATR ≥ 1.5x, or percentile ≥ 95%",
@@ -515,29 +756,36 @@ def evaluate_strategy_rules(
 
 
 def build_report_state(
-    daily_signal_summary: DailySignalSummary | None,
-    data_coverage: DataCoverage | None,
-    macro_context: MacroContext | None,
+    use_states: ReportUseStates,
     market_risk: RiskAssessment,
-    portfolio_risk: RiskAssessment,
+    portfolio_decision_risk: PortfolioRiskAssessment,
     rules: list[StrategyRuleResult],
     evidence: list[MarketEvidence],
     portfolio: PortfolioSummary,
 ) -> ReportState:
     return ReportState(
-        executive_status=(
-            daily_signal_summary.status if daily_signal_summary else "not_available"
-        ),
         data_quality_status=(
-            data_coverage.status if data_coverage else "unavailable"
+            use_states.data_quality.overall.status
+            if use_states.data_quality is not None
+            else "unknown"
         ),
-        macro_regime=(
-            macro_context.overall_regime if macro_context else "unavailable"
-        ),
+        market_actionability=use_states.market.actionability,
+        market_regime=use_states.market.regime,
         market_risk_score=market_risk.score,
         market_risk_level=market_risk.level,
-        portfolio_risk_score=portfolio_risk.score,
-        portfolio_risk_level=portfolio_risk.level,
+        portfolio_risk=use_states.portfolio.risk,
+        portfolio_data_readiness=use_states.portfolio.data_readiness,
+        portfolio_actionability=use_states.portfolio.actionability,
+        portfolio_exposure_risk_score=portfolio_decision_risk.exposure_risk.score,
+        portfolio_exposure_risk_level=portfolio_decision_risk.exposure_risk.level,
+        portfolio_data_quality_risk_score=(
+            portfolio_decision_risk.data_quality_risk.score
+        ),
+        portfolio_data_quality_risk_level=(
+            portfolio_decision_risk.data_quality_risk.level
+        ),
+        news_quality=use_states.news.quality,
+        news_actionability=use_states.news.actionability,
         triggered_rules=tuple(
             sorted(f"{rule.name}:{rule.status}" for rule in rules)
         ),
@@ -575,18 +823,58 @@ def extract_report_state(content: str | None) -> ReportState | None:
             line[len(REPORT_STATE_PREFIX) : -len(REPORT_STATE_SUFFIX)]
         )
         return ReportState(
-            executive_status=data["executive_status"],
-            data_quality_status=data["data_quality_status"],
-            macro_regime=data["macro_regime"],
+            data_quality_status=data.get("data_quality_status", "unknown"),
+            market_actionability=data.get("market_actionability", "available"),
+            market_regime=data.get(
+                "market_regime", data.get("macro_regime", "unknown")
+            ),
             market_risk_score=int(
                 data.get("market_risk_score", data.get("risk_score", 0))
             ),
             market_risk_level=data.get(
                 "market_risk_level", data.get("risk_level", "unknown")
             ),
-            portfolio_risk_score=int(data.get("portfolio_risk_score", 0)),
-            portfolio_risk_level=data.get("portfolio_risk_level", "unknown"),
-            triggered_rules=tuple(data["triggered_rules"]),
+            portfolio_risk=data.get("portfolio_risk", "unknown"),
+            portfolio_data_readiness=data.get(
+                "portfolio_data_readiness",
+                "blocked"
+                if data.get("data_quality_status") == "blocked"
+                else "unknown",
+            ),
+            portfolio_actionability=data.get(
+                "portfolio_actionability", "blocked"
+            ),
+            portfolio_exposure_risk_score=int(
+                data.get(
+                    "portfolio_exposure_risk_score",
+                    data.get("portfolio_decision_risk_score", 0),
+                )
+            ),
+            portfolio_exposure_risk_level=data.get(
+                "portfolio_exposure_risk_level",
+                data.get("portfolio_decision_risk_level", "unknown"),
+            ),
+            portfolio_data_quality_risk_score=int(
+                data.get(
+                    "portfolio_data_quality_risk_score",
+                    data.get("portfolio_risk_score", 0),
+                )
+            ),
+            portfolio_data_quality_risk_level=data.get(
+                "portfolio_data_quality_risk_level",
+                data.get("portfolio_risk_level", "unknown"),
+            ),
+            news_quality=data.get(
+                "news_quality",
+                "blocked"
+                if data.get("data_quality_status") == "blocked"
+                else "unknown",
+            ),
+            news_actionability=data.get("news_actionability", "unavailable"),
+            triggered_rules=tuple(
+                _normalize_legacy_rule(value)
+                for value in data["triggered_rules"]
+            ),
             medium_term_trends=tuple(
                 _normalize_legacy_trend(value)
                 for value in data.get(
@@ -606,6 +894,13 @@ def _normalize_legacy_trend(value: str) -> str:
     )
 
 
+def _normalize_legacy_rule(value: str) -> str:
+    return value.replace(
+        "Data quality circuit breaker",
+        "Legacy overall data-quality gate",
+    )
+
+
 def compare_report_states(
     previous: ReportState | None,
     current: ReportState,
@@ -613,13 +908,20 @@ def compare_report_states(
     if previous is None:
         return ["Baseline created; no previous comparable report state was found."]
     labels = {
-        "executive_status": "Executive status",
-        "data_quality_status": "Data quality",
-        "macro_regime": "Macro regime",
+        "data_quality_status": "Overall data quality",
+        "market_actionability": "Market actionability",
+        "market_regime": "Market regime",
         "market_risk_score": "Market risk score",
         "market_risk_level": "Market risk level",
-        "portfolio_risk_score": "Portfolio risk score",
-        "portfolio_risk_level": "Portfolio risk level",
+        "portfolio_risk": "Portfolio risk",
+        "portfolio_data_readiness": "Portfolio data readiness",
+        "portfolio_actionability": "Portfolio actionability",
+        "portfolio_exposure_risk_score": "Portfolio exposure risk score",
+        "portfolio_exposure_risk_level": "Portfolio exposure risk level",
+        "portfolio_data_quality_risk_score": "Portfolio data-quality risk score",
+        "portfolio_data_quality_risk_level": "Portfolio data-quality risk level",
+        "news_quality": "News quality",
+        "news_actionability": "News actionability",
         "triggered_rules": "Triggered/near rules",
         "medium_term_trends": "Medium-term trends",
         "portfolio_gaps": "Portfolio target gaps",
@@ -638,30 +940,119 @@ def build_gpt_tasks(
     changes: list[str],
     rules: list[StrategyRuleResult],
     evidence: list[MarketEvidence],
+    use_states: ReportUseStates,
 ) -> list[GptAnalysisTask]:
-    refs = tuple(row.evidence_ref for row in evidence[:6])
-    questions: list[tuple[str, tuple[str, ...]]] = []
+    market_refs = tuple(row.evidence_ref for row in evidence[:6])
+    evidence_by_symbol = {row.symbol: row.evidence_ref for row in evidence}
+    questions: list[
+        tuple[str, str, tuple[str, ...], str, tuple[str, ...]]
+    ] = []
     if any("Baseline created" not in item and "No state changes" not in item for item in changes):
         questions.append(
-            ("哪些状态变化最重要，它们是否改变此前判断？", ("STATE:CHANGES",))
+            (
+                "explain_state_changes",
+                "哪些状态变化最重要，它们是否改变此前判断？",
+                (
+                    "STATE:CHANGES",
+                    "STATE:MARKET",
+                    "STATE:PORTFOLIO",
+                    "STATE:NEWS",
+                ),
+                "ready",
+                (),
+            )
         )
     if rules:
         questions.append(
             (
+                "explain_triggered_rules",
                 "如何解释已触发或接近触发的规则，并识别共同风险簇？",
                 tuple(dict.fromkeys(
                     ref for rule in rules for ref in rule.evidence_refs
                 )),
+                "ready",
+                (),
             )
         )
-    questions.extend((question, refs) for question in profile.gpt_questions)
-    expected = (
-        "Conclusion; supporting evidence; counterevidence; confidence; "
-        "confirmation conditions; invalidation conditions."
+    for index, question in enumerate(profile.gpt_questions, 1):
+        refs, required_state = _gpt_question_refs(
+            question,
+            market_refs,
+            evidence_by_symbol,
+        )
+        blocked_reasons: list[str] = []
+        status = "ready"
+        capability = None
+        if use_states.data_quality is not None:
+            capabilities = use_states.data_quality.capabilities
+            capability = {
+                "portfolio": capabilities.investment_action,
+                "news": capabilities.news_analysis,
+                "market": capabilities.market_analysis,
+                "fx": capabilities.fx_analysis,
+            }.get(required_state)
+        if capability is not None and capability.status != "available":
+            status = (
+                "blocked"
+                if capability.status in {"blocked", "unavailable"}
+                else "degraded"
+            )
+            blocked_reasons.extend(capability.reasons)
+        elif (
+            required_state == "portfolio"
+            and use_states.portfolio.actionability != "available"
+        ):
+            status = "blocked"
+            blocked_reasons.append(use_states.portfolio.reason)
+        elif required_state == "news" and use_states.news.actionability != "available":
+            status = "blocked"
+            blocked_reasons.append(use_states.news.reason)
+        elif required_state == "market" and use_states.market.actionability != "available":
+            status = "blocked"
+            blocked_reasons.append(use_states.market.reason)
+        if (
+            any(term in question for term in ["目标仓位", "配置缺口"])
+            and not profile.target_allocations
+        ):
+            status = "blocked"
+            blocked_reasons.append("Target allocations are not configured.")
+        task_id = (
+            "evaluate_allocation_gap"
+            if any(term in question for term in ["目标仓位", "配置缺口"])
+            else f"profile_question_{index}_{required_state}"
+        )
+        questions.append(
+            (task_id, question, refs, status, tuple(blocked_reasons))
+        )
+
+    available_output = (
+        "Conclusion; supporting evidence linked by ref; counterevidence; "
+        "confidence; confirmation conditions; invalidation conditions."
+    )
+    blocked_output = (
+        "State that the task is blocked; list missing or stale inputs by evidence "
+        "ref; do not infer a decision; specify what would unblock the task."
     )
     return [
-        GptAnalysisTask(question, evidence_refs, expected, "State confidence as low/medium/high.")
-        for question, evidence_refs in _deduplicate_pairs(questions)[:6]
+        GptAnalysisTask(
+            question=question,
+            evidence_refs=evidence_refs,
+            expected_output=(
+                blocked_output if status == "blocked" else available_output
+            ),
+            confidence_requirement=(
+                "Do not assign confidence while blocked."
+                if status == "blocked"
+                else "State confidence as low/medium and name degraded inputs."
+                if status == "degraded"
+                else "State confidence as low/medium/high."
+            ),
+            task_id=task_id,
+            status=status,
+            blocked_reasons=blocked_reasons,
+        )
+        for task_id, question, evidence_refs, status, blocked_reasons
+        in _deduplicate_task_specs(questions)[:6]
     ]
 
 
@@ -768,12 +1159,29 @@ def _portfolio_snapshot_status(
 
 
 def _overall_quality_status(rows: list[DataCoverageRow]) -> str:
-    statuses = {row.status for row in rows}
-    if "blocked" in statuses:
+    price_rows = [row for row in rows if row.category == "Prices"]
+    failed_price_rows = [
+        row for row in price_rows if row.status != "available"
+    ]
+    core_price_blocked = any(
+        row.item == "SPY" and row.status in {"blocked", "missing", "error"}
+        for row in price_rows
+    )
+    widespread_price_failure = bool(price_rows) and (
+        len(failed_price_rows) >= max(3, (len(price_rows) + 1) // 2)
+    )
+    structural_failure = any(
+        row.status in {"blocked", "error"}
+        and (
+            row.category.casefold() in {"schema", "time alignment"}
+            or "schema" in row.detail.casefold()
+            or "align" in row.detail.casefold()
+        )
+        for row in rows
+    )
+    if core_price_blocked or widespread_price_failure or structural_failure:
         return "blocked"
-    if "stale" in statuses:
-        return "stale"
-    if any(status != "available" for status in statuses):
+    if any(row.status != "available" for row in rows):
         return "degraded"
     return "available"
 
@@ -821,6 +1229,73 @@ def _risk_level(score: int) -> str:
     return "high" if score >= 60 else "elevated" if score >= 30 else "low"
 
 
+def _market_state_regime(
+    macro_context: MacroContext | None,
+    sector_rotation: SectorRotation,
+) -> str:
+    if macro_context is None:
+        return "unknown"
+    has_rotation = bool(
+        sector_rotation.strong_sectors or sector_rotation.weak_sectors
+    )
+    if macro_context.rates_context == "rates_pressure" and has_rotation:
+        return "rotation_under_rate_pressure"
+    if macro_context.rates_context == "duration_supported" and has_rotation:
+        return "rotation_with_duration_support"
+    return macro_context.overall_regime
+
+
+def _gpt_question_refs(
+    question: str,
+    market_refs: tuple[str, ...],
+    evidence_by_symbol: dict[str, str],
+) -> tuple[tuple[str, ...], str]:
+    if any(
+        term in question
+        for term in ["目标仓位", "配置缺口", "组合风险", "组合决策"]
+    ):
+        return (
+            tuple(
+                dict.fromkeys(
+                    [
+                        "STATE:MARKET",
+                        *market_refs,
+                        "STATE:PORTFOLIO",
+                        "DQ:PORTFOLIO:SNAPSHOT",
+                        "DQ:PORTFOLIO:CASH_ROLES",
+                        "PORTFOLIO:ALLOCATION",
+                    ]
+                )
+            ),
+            "portfolio",
+        )
+    if any(term in question for term in ["换汇", "USD/CNH", "美元指数"]):
+        fx_refs = [
+            evidence_by_symbol[symbol]
+            for symbol in ["USD/CNH", "DX-Y.NYB", "^TNX"]
+            if symbol in evidence_by_symbol
+        ]
+        return (
+            tuple(
+                dict.fromkeys(
+                    [
+                        "STATE:MARKET",
+                        *fx_refs,
+                        "STATE:PORTFOLIO",
+                        "PORTFOLIO:FX",
+                    ]
+                )
+            ),
+            "fx",
+        )
+    if any(term in question for term in ["新闻", "因果", "事件"]):
+        return (("STATE:NEWS", "DQ:NEWS"), "news")
+    return (
+        tuple(dict.fromkeys(["STATE:MARKET", "BREADTH:MARKET", *market_refs])),
+        "market",
+    )
+
+
 def _state_value(value) -> str:
     if isinstance(value, tuple):
         return ", ".join(value) if value else "none"
@@ -835,13 +1310,13 @@ def _deduplicate(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
 
-def _deduplicate_pairs(
-    values: list[tuple[str, tuple[str, ...]]],
-) -> list[tuple[str, tuple[str, ...]]]:
+def _deduplicate_task_specs(
+    values: list[tuple[str, str, tuple[str, ...], str, tuple[str, ...]]],
+) -> list[tuple[str, str, tuple[str, ...], str, tuple[str, ...]]]:
     seen: set[str] = set()
     result = []
-    for question, refs in values:
+    for task_id, question, refs, status, blocked_reasons in values:
         if question not in seen:
-            result.append((question, refs))
+            result.append((task_id, question, refs, status, blocked_reasons))
             seen.add(question)
     return result

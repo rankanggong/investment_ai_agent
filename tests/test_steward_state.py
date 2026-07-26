@@ -40,7 +40,7 @@ def test_import_steward_state_csv_replaces_cash_holdings_and_fx(tmp_path):
     assert summary.fx_conversions == 1
     assert state.cash_positions[0].currency == "CNY"
     assert state.cash_positions[0].balance == Decimal("1200000")
-    assert state.cash_positions[0].cash_role == "investable"
+    assert state.cash_positions[0].cash_role == "investment_cash"
     assert state.holdings[0].symbol == "XAU-GRAM"
     assert state.holdings[0].quantity == Decimal("5.6724")
     assert state.holdings[0].total_cost.quantize(Decimal("0.01")) == Decimal("5000.00")
@@ -124,7 +124,12 @@ def test_repository_state_template_is_importable_and_includes_gold(tmp_path):
     gold = next(item for item in state.holdings if item.symbol == "XAU-GRAM")
 
     assert summary.cash_positions == 3
-    assert summary.holdings == 6
+    assert summary.holdings == 4
     assert summary.fx_conversions == 1
     assert gold.quantity == Decimal("5.6724")
     assert gold.total_cost.quantize(Decimal("0.01")) == Decimal("5000.00")
+    assert {item.cash_role for item in state.cash_positions} == {
+        "investment_cash",
+        "investment_source",
+        "reserved",
+    }

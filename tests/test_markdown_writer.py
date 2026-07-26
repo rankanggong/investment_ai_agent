@@ -8,13 +8,17 @@ from app.models.analysis import (
     DataCoverageRow,
     DailySignalSummary,
     MarketEvidence,
+    MarketState,
     MacroContext,
     MacroEvidenceRow,
     NewsQualityGate,
+    NewsState,
     PortfolioAllocation,
     PortfolioSummary,
+    PortfolioDecisionState,
     PriceSignal,
     RiskAssessment,
+    ReportUseStates,
     SectorRotation,
     StrategyRuleResult,
 )
@@ -112,9 +116,10 @@ def test_data_quality_only_lists_missing_or_blocked_modules():
     )
 
     quality = content.split("## 2. Portfolio Summary", 1)[0]
-    assert "| Macro | ^TNX | missing | N/A | No history. |" in quality
+    assert "| DQ:MARKET | Macro | ^TNX | missing | N/A | No history. |" in quality
     assert "| Prices | SPY | available" not in quality
-    assert "| News | entity pipeline | blocked" in quality
+    assert "| DQ:NEWS | News | entity pipeline | blocked" in quality
+    assert "Overall: unknown" in quality
 
 
 def test_portfolio_summary_and_account_details_are_separated():
@@ -149,7 +154,7 @@ def test_portfolio_summary_and_account_details_are_separated():
                 currency="USD",
                 balance=Decimal("9000"),
                 as_of_date=date(2026, 7, 19),
-                cash_role="investable",
+                cash_role="investment_cash",
             )
         ],
     )
@@ -177,7 +182,47 @@ def test_portfolio_summary_and_account_details_are_separated():
     assert "Daily investment budget: CNY 500.00" in content
     assert "USD coverage days: 180.0" in content
     assert "### B. Account Detail" in content
-    assert "| bank | usd | USD | 9000 | investable | 2026-07-19 |" in content
+    assert "| bank | usd | USD | 9000 | investment_cash | 2026-07-19 |" in content
+
+
+def test_report_renders_use_specific_states_and_metric_definitions():
+    states = ReportUseStates(
+        market=MarketState(
+            "low",
+            "rotation_under_rate_pressure",
+            "available",
+            "Market evidence is available.",
+        ),
+        portfolio=PortfolioDecisionState(
+            "unknown",
+            "blocked",
+            "blocked",
+            "Portfolio decision readiness is blocked because holdings are stale "
+            "and cash roles are unclassified.",
+        ),
+        news=NewsState(
+            "blocked",
+            "unavailable",
+            "News collection is disabled.",
+        ),
+    )
+
+    content = render_daily_report(
+        report_date=date(2026, 7, 25),
+        price_signals={},
+        sector_rotation=sector_rotation(),
+        use_states=states,
+    )
+
+    assert "[STATE:MARKET] Market risk is low" in content
+    assert "market analysis is available" in content
+    assert "[STATE:PORTFOLIO] Portfolio risk is unknown" in content
+    assert "Portfolio decision readiness is blocked" in content
+    assert "[STATE:NEWS] News quality is blocked" in content
+    assert "news-based causal analysis is unavailable" in content
+    assert "z-score: latest absolute 1D return" in content
+    assert "Percentile: rank of the latest absolute 1D return" in content
+    assert "Drawdown: latest close divided by the highest close" in content
 
 
 def test_key_evidence_separates_structure_from_short_term_and_explains_risk():

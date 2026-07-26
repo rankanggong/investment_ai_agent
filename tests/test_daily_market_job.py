@@ -24,7 +24,7 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
                     currency="USD",
                     balance=Decimal("9000"),
                     as_of_date=date(2026, 7, 19),
-                    cash_role="investable",
+                    cash_role="investment_cash",
                 )
             ],
             holdings=[
@@ -68,4 +68,4 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     assert "| broker | fund | VOO | Vanguard S&P 500 ETF |" in content
     assert "#### FX Conversions" in content
     assert "| 2026-07-15 | bank / usd | CNY 13587.60 | USD 2000.00 |" in content
-    assert "| bank | cash | USD | 9000 | investable | 2026-07-19 |" in content
+    assert "| bank | cash | USD | 9000 | investment_cash | 2026-07-19 |" in content

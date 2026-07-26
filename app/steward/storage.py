@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS steward_cash_positions (
   balance TEXT NOT NULL,
   as_of_date TEXT NOT NULL,
   notes TEXT NOT NULL DEFAULT '',
-  cash_role TEXT NOT NULL DEFAULT 'unclassified'
+  cash_role TEXT NOT NULL DEFAULT 'unknown'
 );
 
 CREATE TABLE IF NOT EXISTS steward_position_snapshots (
@@ -145,7 +145,7 @@ def initialize_steward_database(db_path: Path) -> None:
         if "cash_role" not in columns:
             conn.execute(
                 "ALTER TABLE steward_cash_positions "
-                "ADD COLUMN cash_role TEXT NOT NULL DEFAULT 'unclassified'"
+                "ADD COLUMN cash_role TEXT NOT NULL DEFAULT 'unknown'"
             )
 
 

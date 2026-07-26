@@ -74,7 +74,8 @@ proxies when those histories are available.
 
 The daily report contains:
 
-- executive state and issue-only data quality;
+- independent market, portfolio-decision, and news states with use-specific
+  actionability, plus issue-only data quality;
 - cost-based portfolio aggregation, configured target gaps, daily budget, and
   USD coverage days;
 - state changes since the previous comparable report;
@@ -82,9 +83,11 @@ The daily report contains:
   trend from 5-day movement and showing drawdown from the 252-day high;
 - triggered or near-threshold deterministic rules with 60D return-magnitude
   z-score, 20D ATR multiple, and 252D historical percentile;
-- separate market-cluster and portfolio risk scores, tracked-universe breadth,
-  VIX, and RSP-versus-SPY evidence;
-- GPT analysis questions with evidence references and expected-output contracts;
+- separate market risk, portfolio exposure risk, and portfolio data-quality
+  risk scores, with single-asset alerts distinct from correlated clusters;
+  tracked-universe breadth, VIX, and RSP-versus-SPY evidence;
+- GPT analysis tasks with stable IDs, `ready`/`degraded`/`blocked` status,
+  evidence references, and expected-output contracts;
   and
 - an appendix with full price evidence, account detail, technical bounds, macro
   evidence, and raw price sources.
@@ -96,7 +99,8 @@ The generated report is research support only. It does not provide trading advic
 The steward reads one authoritative CSV containing current cash positions,
 holding snapshots, and FX conversions. It does not require detailed bank
 transactions or PDF statement parsing. Each cash position must explicitly use
-`investable`, `reserved`, or `unclassified` as its `cash_role`; the report never
+`investment_cash`, `investment_source`, `reserved`, `emergency`, or `unknown`
+as its `cash_role`; the report never
 infers deployability from the account or currency:
 
 ```bash
@@ -123,8 +127,10 @@ sold_amount,bought_currency,bought_amount,fee_currency,fee_amount,notes
 Dates use `YYYY-MM-DD`; numbers use a decimal point without thousands
 separators. `RMB` and `人民币` are normalized to `CNY`. The import is atomic and
 replaces the prior steward state only after every populated row validates.
-Cash rows require `cash_role` set to `investable`, `reserved`, or
-`unclassified`; the agent never infers cash availability from an account name.
+Cash rows require `cash_role` set to `investment_cash`, `investment_source`,
+`reserved`, `emergency`, or `unknown`; the agent never infers cash availability
+from an account name. Legacy `investable` and `unclassified` values remain
+importable and are normalized to the canonical roles.
 
 ## Amazon Bedrock
 

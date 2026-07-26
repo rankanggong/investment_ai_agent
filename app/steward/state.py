@@ -93,9 +93,20 @@ def _parse_cash(row: dict[str, str]) -> CashPosition:
         "cash_role",
     )
     cash_role = row["cash_role"].casefold()
-    if cash_role not in {"investable", "reserved", "unclassified"}:
+    cash_role = {
+        "investable": "investment_cash",
+        "unclassified": "unknown",
+    }.get(cash_role, cash_role)
+    if cash_role not in {
+        "investment_cash",
+        "investment_source",
+        "reserved",
+        "emergency",
+        "unknown",
+    }:
         raise ValueError(
-            "cash_role must be investable, reserved, or unclassified"
+            "cash_role must be investment_cash, investment_source, reserved, "
+            "emergency, or unknown"
         )
     return CashPosition(
         institution=row["institution"],

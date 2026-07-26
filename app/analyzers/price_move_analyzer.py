@@ -164,7 +164,7 @@ def _atr_multiple(bars: list[PriceBar], atr_20: float | None) -> float | None:
 
 
 def _historical_percentile(bars: list[PriceBar]) -> float | None:
-    returns = _daily_returns(bars[-253:])
+    returns = _daily_returns(bars[-254:])
     if len(returns) < 20:
         return None
     latest = abs(returns[-1])

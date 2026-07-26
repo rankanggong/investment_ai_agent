@@ -4,6 +4,20 @@ from decimal import Decimal
 from typing import Literal
 
 
+CashRole = Literal[
+    "investment_cash",
+    "investment_source",
+    "reserved",
+    "emergency",
+    "unknown",
+]
+
+_LEGACY_CASH_ROLES = {
+    "investable": "investment_cash",
+    "unclassified": "unknown",
+}
+
+
 @dataclass(frozen=True)
 class CashTransaction:
     institution: str
@@ -58,7 +72,19 @@ class CashPosition:
     balance: Decimal
     as_of_date: date
     notes: str = ""
-    cash_role: Literal["investable", "reserved", "unclassified"] = "unclassified"
+    cash_role: CashRole = "unknown"
+
+    def __post_init__(self) -> None:
+        normalized = _LEGACY_CASH_ROLES.get(self.cash_role, self.cash_role)
+        if normalized not in {
+            "investment_cash",
+            "investment_source",
+            "reserved",
+            "emergency",
+            "unknown",
+        }:
+            raise ValueError(f"unsupported cash role: {self.cash_role}")
+        object.__setattr__(self, "cash_role", normalized)
 
 
 @dataclass(frozen=True)

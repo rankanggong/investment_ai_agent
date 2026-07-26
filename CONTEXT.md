@@ -14,19 +14,27 @@ The balance of one currency in one owned account as of a stated date.
 _Avoid_: Cash transaction, cashflow
 
 **Cash Role**:
-The supplied intended use of a Cash Position: `investable`, `reserved`, or
-`unclassified`.
+The supplied intended use of a Cash Position: `investment_cash`,
+`investment_source`, `reserved`, `emergency`, or `unknown`. Legacy imports map
+`investable` to `investment_cash` and `unclassified` to `unknown`.
 _Avoid_: Inferring availability from an account name
 
-**Investable Cash**:
-A Cash Position explicitly designated as available for investment or foreign
-exchange.
+**Investment Cash**:
+A Cash Position explicitly designated as immediately available for investment.
 _Avoid_: Total cash, available balance
 
+**Investment Source**:
+A Cash Position designated as a funding source that may be converted or moved
+before it becomes Investment Cash.
+_Avoid_: Investment Cash, automatic deployability
+
 **Reserved Cash**:
-A Cash Position explicitly designated for living expenses, emergencies, or
-another non-investment purpose.
+A Cash Position explicitly designated for a planned non-investment purpose.
 _Avoid_: Idle cash, cash drag
+
+**Emergency Cash**:
+A Cash Position explicitly designated as an emergency reserve.
+_Avoid_: Investment Cash, Reserved Cash
 
 **Holding Snapshot**:
 The quantity and supplied unit cost of one asset in one account as of a stated date.
@@ -82,12 +90,43 @@ _Avoid_: Counting every asset signal as independent risk
 **Market Risk**:
 The risk state derived from market prices, breadth, volatility, rates, credit,
 currency, and other market evidence.
-_Avoid_: Portfolio risk
+_Avoid_: Portfolio risk, report-wide data quality
 
 **Portfolio Risk**:
-The risk state derived from supplied holdings, target gaps, cash roles,
-coverage, snapshot freshness, and FX conversion evidence.
-_Avoid_: Market risk
+The investment risk state derived from sufficiently current and classified
+holdings and cash evidence. It is `unknown` when portfolio decision readiness is
+blocked.
+_Avoid_: Market risk, portfolio data risk
+
+**Portfolio Decision Readiness**:
+Whether supplied holdings, targets, cash roles, coverage, and snapshot freshness
+are sufficient to support portfolio-specific analysis.
+_Avoid_: Portfolio risk
+
+**Portfolio Exposure Risk**:
+A score derived only from supplied investment-state facts such as allocation
+gaps, invested-sleeve concentration, and investment-cash coverage.
+_Avoid_: Snapshot freshness, unknown cash roles
+
+**Portfolio Data-Quality Risk**:
+A diagnostic score describing uncertainty caused by stale or unavailable
+snapshots and unknown cash roles.
+_Avoid_: Portfolio exposure risk
+
+**Capability State**:
+The use-specific `available`, `limited`, `degraded`, or `blocked` status for
+market, macro, portfolio, investment-action, FX, or news analysis. One blocked
+capability does not automatically block the overall report.
+_Avoid_: A single report-wide actionability flag
+
+**Market Actionability**:
+Whether market-price, breadth, volatility, and macro evidence are sufficient for
+market analysis, independent of portfolio and news readiness.
+_Avoid_: Overall data quality
+
+**News Actionability**:
+Whether news evidence is sufficient for causal or event-driven analysis.
+_Avoid_: Market actionability, portfolio actionability
 
 **FX Spot Premium**:
 The difference between an FX Conversion's all-in effective rate and a supplied

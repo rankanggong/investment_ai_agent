@@ -179,11 +179,23 @@ class PortfolioSummary:
     usd_cash: float
     usd_daily_spend: float | None
     usd_coverage_days: float | None
-    investable_cash: float | None = None
+    investment_cash: float | None = None
+    investment_source_cash: float | None = None
     reserved_cash: float | None = None
-    unclassified_cash: float | None = None
+    emergency_cash: float | None = None
+    unknown_cash: float | None = None
     snapshot_status: str = "unavailable"
     notes: list[str] = field(default_factory=list)
+
+    @property
+    def investable_cash(self) -> float | None:
+        """Compatibility name for the canonical investment_cash role."""
+        return self.investment_cash
+
+    @property
+    def unclassified_cash(self) -> float | None:
+        """Compatibility name for the canonical unknown role."""
+        return self.unknown_cash
 
 
 @dataclass(frozen=True)
@@ -193,6 +205,7 @@ class RiskAssessment:
     explanations: list[str]
     scope: str = "market"
     clusters: list["RiskClusterAssessment"] = field(default_factory=list)
+    single_asset_alerts: list["RiskAssetAlert"] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -202,6 +215,23 @@ class RiskClusterAssessment:
     severity: float
     points: int
     evidence_refs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RiskAssetAlert:
+    symbol: str
+    category: str
+    severity: float
+    points: int
+    evidence_ref: str
+
+
+@dataclass(frozen=True)
+class PortfolioRiskAssessment:
+    exposure_risk: RiskAssessment
+    data_quality_risk: RiskAssessment
+    decision_readiness: str
+    readiness_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -265,17 +295,84 @@ class GptAnalysisTask:
     evidence_refs: tuple[str, ...]
     expected_output: str
     confidence_requirement: str
+    task_id: str = ""
+    status: str = "ready"
+    blocked_reasons: tuple[str, ...] = ()
+
+    @property
+    def blocked_reason(self) -> str:
+        return "; ".join(self.blocked_reasons)
+
+
+@dataclass(frozen=True)
+class CapabilityState:
+    status: str
+    reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReportCapabilities:
+    market_analysis: CapabilityState
+    macro_analysis: CapabilityState
+    portfolio_analysis: CapabilityState
+    investment_action: CapabilityState
+    fx_analysis: CapabilityState
+    news_analysis: CapabilityState
+
+
+@dataclass(frozen=True)
+class DataQualityState:
+    overall: CapabilityState
+    capabilities: ReportCapabilities
+
+
+@dataclass(frozen=True)
+class MarketState:
+    risk: str
+    regime: str
+    actionability: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class PortfolioDecisionState:
+    risk: str
+    data_readiness: str
+    actionability: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class NewsState:
+    quality: str
+    actionability: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class ReportUseStates:
+    market: MarketState
+    portfolio: PortfolioDecisionState
+    news: NewsState
+    data_quality: DataQualityState | None = None
 
 
 @dataclass(frozen=True)
 class ReportState:
-    executive_status: str
     data_quality_status: str
-    macro_regime: str
+    market_actionability: str
+    market_regime: str
     market_risk_score: int
     market_risk_level: str
-    portfolio_risk_score: int
-    portfolio_risk_level: str
+    portfolio_risk: str
+    portfolio_data_readiness: str
+    portfolio_actionability: str
+    portfolio_exposure_risk_score: int
+    portfolio_exposure_risk_level: str
+    portfolio_data_quality_risk_score: int
+    portfolio_data_quality_risk_level: str
+    news_quality: str
+    news_actionability: str
     triggered_rules: tuple[str, ...]
     medium_term_trends: tuple[str, ...]
     portfolio_gaps: tuple[str, ...]

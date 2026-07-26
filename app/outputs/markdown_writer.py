@@ -5,17 +5,23 @@ from pathlib import Path
 from app.models.analysis import (
     CompanyPriceBounds,
     DataCoverage,
+    DataCoverageRow,
     DailySignalSummary,
     FxCostComparison,
     GptAnalysisTask,
     MarketBreadth,
     MarketEvidence,
+    MarketState,
     MacroContext,
     NewsQualityGate,
+    NewsState,
+    PortfolioDecisionState,
+    PortfolioRiskAssessment,
     PortfolioSummary,
     PriceSignal,
     ReportState,
     ReportSignals,
+    ReportUseStates,
     RiskAssessment,
     SectorRotation,
     StrategyRuleResult,
@@ -42,7 +48,8 @@ def render_daily_report(
     news_quality: NewsQualityGate | None = None,
     portfolio_summary: PortfolioSummary | None = None,
     risk_assessment: RiskAssessment | None = None,
-    portfolio_risk: RiskAssessment | None = None,
+    portfolio_decision_risk: PortfolioRiskAssessment | None = None,
+    use_states: ReportUseStates | None = None,
     market_breadth: MarketBreadth | None = None,
     fx_costs: list[FxCostComparison] | None = None,
     key_evidence: list[MarketEvidence] | None = None,
@@ -60,11 +67,47 @@ def render_daily_report(
     )
     effective_evidence = key_evidence or []
     effective_rules = strategy_rules or []
-    effective_portfolio_risk = portfolio_risk or RiskAssessment(
-        score=0,
-        level="unknown",
-        explanations=["Portfolio risk assessment was not generated."],
-        scope="portfolio",
+    effective_portfolio_decision_risk = (
+        portfolio_decision_risk
+        or PortfolioRiskAssessment(
+            exposure_risk=RiskAssessment(
+                score=0,
+                level="unknown",
+                explanations=["Portfolio exposure risk was not generated."],
+                scope="portfolio_exposure",
+            ),
+            data_quality_risk=RiskAssessment(
+                score=0,
+                level="unknown",
+                explanations=["Portfolio data-quality risk was not generated."],
+                scope="portfolio_data_quality",
+            ),
+            decision_readiness="blocked",
+            readiness_reasons=("Portfolio risk was not evaluated.",),
+        )
+    )
+    effective_use_states = use_states or ReportUseStates(
+        market=MarketState(
+            risk=effective_risk.level,
+            regime=(
+                macro_context.overall_regime
+                if macro_context is not None
+                else "unknown"
+            ),
+            actionability="available" if price_signals else "blocked",
+            reason="Fallback state derived by the renderer.",
+        ),
+        portfolio=PortfolioDecisionState(
+            risk="unknown",
+            data_readiness="blocked",
+            actionability="blocked",
+            reason="Portfolio decision readiness was not evaluated.",
+        ),
+        news=NewsState(
+            quality="blocked",
+            actionability="unavailable",
+            reason="News state was not evaluated.",
+        ),
     )
     lines = [
         f"# Daily Market State - {report_date.isoformat()}",
@@ -73,21 +116,22 @@ def render_daily_report(
         "",
         "## 0. Executive State",
         "",
-        _executive_sentence(
-            daily_signal_summary,
-            macro_context,
-            effective_risk,
-            effective_portfolio_risk,
-        ),
-        "",
-        "## 1. Data Quality",
-        "",
     ]
-    lines.extend(_render_data_quality_issues(data_coverage, news_quality))
+    lines.extend(_render_executive_states(effective_use_states))
+    lines.extend(["", "## 1. Data Quality", ""])
+    lines.extend(
+        _render_data_quality_issues(
+            data_coverage,
+            news_quality,
+            effective_use_states,
+        )
+    )
     lines.extend(
         [
             "",
             "## 2. Portfolio Summary",
+            "",
+            "Evidence Ref: PORTFOLIO:ALLOCATION",
             "",
         ]
     )
@@ -96,6 +140,8 @@ def render_daily_report(
         [
             "",
             "## 3. Changes Since Previous Report",
+            "",
+            "Evidence Ref: STATE:CHANGES",
             "",
         ]
     )
@@ -108,7 +154,9 @@ def render_daily_report(
         ]
     )
     lines.extend(_render_key_evidence(effective_evidence))
+    lines.extend(["", *_render_metric_definitions()])
     lines.extend(["", "Market Breadth:"])
+    lines.extend(["Evidence Refs: BREADTH:MARKET, BREADTH:SECTOR_ROTATION"])
     lines.extend(_render_market_breadth(market_breadth))
     lines.extend(
         [
@@ -120,14 +168,33 @@ def render_daily_report(
     lines.extend(_render_triggered_rules(effective_rules))
     lines.extend(["", f"Market risk: {effective_risk.score}/100 ({effective_risk.level})"])
     lines.extend(f"- {reason}" for reason in effective_risk.explanations)
+    lines.extend(_render_unusual_move_groups(effective_risk))
     lines.extend(
         [
             "",
-            f"Portfolio risk: {effective_portfolio_risk.score}/100 "
-            f"({effective_portfolio_risk.level})",
+            f"Portfolio exposure risk: "
+            f"{effective_portfolio_decision_risk.exposure_risk.score}/100 "
+            f"({effective_portfolio_decision_risk.exposure_risk.level})",
         ]
     )
-    lines.extend(f"- {reason}" for reason in effective_portfolio_risk.explanations)
+    lines.extend(
+        f"- {reason}"
+        for reason in effective_portfolio_decision_risk.exposure_risk.explanations
+    )
+    lines.extend(
+        [
+            "",
+            f"Portfolio data-quality risk: "
+            f"{effective_portfolio_decision_risk.data_quality_risk.score}/100 "
+            f"({effective_portfolio_decision_risk.data_quality_risk.level})",
+            f"- Decision readiness: "
+            f"{effective_portfolio_decision_risk.decision_readiness}.",
+        ]
+    )
+    lines.extend(
+        f"- {reason}"
+        for reason in effective_portfolio_decision_risk.data_quality_risk.explanations
+    )
     lines.extend(
         [
             "",
@@ -159,6 +226,7 @@ def render_daily_report(
         lines.extend(["", "#### Holding Snapshots", ""])
         lines.extend(_render_portfolio_holdings(portfolio_state.holdings))
         lines.extend(["", "#### FX Conversions", ""])
+        lines.extend(["Evidence Ref: PORTFOLIO:FX", ""])
         lines.extend(_render_fx_conversions(portfolio_state.fx_conversions))
         lines.extend(["", "#### FX Cost vs Spot", ""])
         lines.extend(_render_fx_costs(fx_costs or []))
@@ -181,39 +249,72 @@ def write_daily_report(report_dir: Path, report_date: date, content: str) -> Pat
     return path
 
 
-def _executive_sentence(
-    summary: DailySignalSummary | None,
-    macro_context: MacroContext | None,
-    risk: RiskAssessment,
-    portfolio_risk: RiskAssessment,
-) -> str:
-    status = summary.status if summary is not None else "not_available"
-    regime = (
-        macro_context.overall_regime
-        if macro_context is not None
-        else "not_available"
-    )
-    return (
-        f"Market state is {status}; macro regime is {regime}; "
-        f"market risk is {risk.score}/100 ({risk.level}); portfolio risk is "
-        f"{portfolio_risk.score}/100 ({portfolio_risk.level})."
-    )
+def _render_executive_states(states: ReportUseStates) -> list[str]:
+    return [
+        f"[STATE:MARKET] Market risk is {states.market.risk}; market regime is "
+        f"{states.market.regime}; market analysis is "
+        f"{states.market.actionability}.",
+        "",
+        f"[STATE:PORTFOLIO] Portfolio risk is {states.portfolio.risk}. "
+        f"{states.portfolio.reason}",
+        "",
+        f"[STATE:NEWS] News quality is {states.news.quality}; news-based causal "
+        f"analysis is {states.news.actionability}.",
+    ]
 
 
 def _render_data_quality_issues(
     data_coverage: DataCoverage | None,
     news_quality: NewsQualityGate | None,
+    states: ReportUseStates,
 ) -> list[str]:
+    capabilities = states.data_quality.capabilities if states.data_quality else None
     lines = [
-        f"Overall: {data_coverage.status if data_coverage else 'blocked'}",
+        "Blocking is use-specific; a blocked portfolio or news module does not "
+        "block market analysis.",
         "",
-        "| Module | Item | Status | Latest | Detail |",
-        "|---|---|---|---|---|",
+        "Overall: "
+        + (states.data_quality.overall.status if states.data_quality else "unknown"),
+        "",
     ]
+    if capabilities is not None:
+        lines.extend([
+            "| Capability | Status | Reasons |",
+            "|---|---|---|",
+        ])
+        for name, capability in (
+            ("market_analysis", capabilities.market_analysis),
+            ("macro_analysis", capabilities.macro_analysis),
+            ("portfolio_analysis", capabilities.portfolio_analysis),
+            ("investment_action", capabilities.investment_action),
+            ("fx_analysis", capabilities.fx_analysis),
+            ("news_analysis", capabilities.news_analysis),
+        ):
+            lines.append(
+                f"| {name} | {capability.status} | "
+                f"{_escape_cell('; '.join(capability.reasons) or 'N/A')} |"
+            )
+        lines.extend(["",
+        "| State Ref | Risk / Quality | Regime / Readiness | Actionability |",
+        "|---|---|---|---|",
+        f"| STATE:MARKET | {states.market.risk} | {states.market.regime} | "
+        f"{states.market.actionability} |",
+        f"| STATE:PORTFOLIO | {states.portfolio.risk} | "
+        f"{states.portfolio.data_readiness} | "
+        f"{states.portfolio.actionability} |",
+        f"| STATE:NEWS | {states.news.quality} | N/A | "
+        f"{states.news.actionability} |",
+        "",
+        ])
+    lines.extend([
+        "| Ref | Module | Item | Status | Latest | Detail |",
+        "|---|---|---|---|---|---|",
+    ])
     issue_count = 0
     if data_coverage is None:
         lines.append(
-            "| Data coverage | all | blocked | N/A | Diagnostics were not generated. |"
+            "| DQ:MARKET | Data coverage | all | blocked | N/A | "
+            "Diagnostics were not generated. |"
         )
         issue_count += 1
     else:
@@ -221,7 +322,8 @@ def _render_data_quality_issues(
             if row.status == "available":
                 continue
             lines.append(
-                f"| {row.category} | {row.item} | {row.status} | "
+                f"| {_data_quality_ref(row)} | {row.category} | {row.item} | "
+                f"{row.status} | "
                 f"{row.latest} | {_escape_cell(row.detail)} |"
             )
             issue_count += 1
@@ -231,7 +333,8 @@ def _render_data_quality_issues(
     } and not any(row.category == "News" for row in (data_coverage.rows if data_coverage else [])):
         detail = "; ".join(news_quality.reasons) or "No detail supplied."
         lines.append(
-            f"| News | entity pipeline | blocked | N/A | {_escape_cell(detail)} |"
+            f"| DQ:NEWS | News | entity pipeline | blocked | N/A | "
+            f"{_escape_cell(detail)} |"
         )
         issue_count += 1
     if issue_count == 0:
@@ -281,11 +384,15 @@ def _render_portfolio_summary(
             "",
             f"USD cash: USD {summary.usd_cash:.2f}",
             "",
-            f"Investable Cash: {_format_money(summary.investable_cash, summary.base_currency)}",
+            f"Investment Cash: {_format_money(summary.investment_cash, summary.base_currency)}",
+            "",
+            f"Investment Source: {_format_money(summary.investment_source_cash, summary.base_currency)}",
             "",
             f"Reserved Cash: {_format_money(summary.reserved_cash, summary.base_currency)}",
             "",
-            f"Unclassified Cash: {_format_money(summary.unclassified_cash, summary.base_currency)}",
+            f"Emergency Cash: {_format_money(summary.emergency_cash, summary.base_currency)}",
+            "",
+            f"Unknown-Role Cash: {_format_money(summary.unknown_cash, summary.base_currency)}",
             "",
             f"Portfolio snapshot status: {summary.snapshot_status}",
             "",
@@ -324,6 +431,22 @@ def _render_key_evidence(evidence: list[MarketEvidence]) -> list[str]:
             f"{row.short_term_state} | {_escape_cell(row.detection_reason)} |"
         )
     return lines
+
+
+def _render_metric_definitions() -> list[str]:
+    return [
+        "Metric Definitions:",
+        "- z-score: latest absolute 1D return minus the mean absolute 1D return "
+        "over the prior observations in a 60-session lookback, divided by the "
+        "standard deviation of those prior daily returns.",
+        "- ATR multiple: absolute latest close-to-close move divided by 20-day "
+        "average true range.",
+        "- Percentile: rank of the latest absolute 1D return against up to 252 "
+        "prior absolute daily returns; 95% means the move is at least as large "
+        "as 95% of the comparison history.",
+        "- Drawdown: latest close divided by the highest close in the latest "
+        "252 sessions, minus one.",
+    ]
 
 
 def _render_triggered_rules(
@@ -367,20 +490,44 @@ def _render_market_breadth(breadth: MarketBreadth | None) -> list[str]:
 def _render_gpt_tasks(tasks: list[GptAnalysisTask]) -> list[str]:
     lines: list[str] = []
     for index, task in enumerate(tasks, 1):
+        lines.extend([
+            f"### Task {index}",
+            "",
+            f"ID: {task.task_id}",
+            "",
+            f"Question: {task.question}",
+            "",
+            f"Status: {task.status}",
+            "",
+            "Evidence Refs: "
+            + (", ".join(task.evidence_refs) if task.evidence_refs else "N/A"),
+            "",
+            f"Expected Output: {task.expected_output}",
+            "",
+            f"Confidence Requirement: {task.confidence_requirement}",
+            "",
+        ])
+        if task.blocked_reasons:
+            lines.extend(["Blocked Reasons:"])
+            lines.extend(f"- {reason}" for reason in task.blocked_reasons)
+            lines.append("")
+    return lines
+
+
+def _render_unusual_move_groups(risk: RiskAssessment) -> list[str]:
+    lines: list[str] = []
+    if risk.single_asset_alerts:
+        lines.extend(["", "Single-asset alerts:"])
         lines.extend(
-            [
-                f"### Task {index}",
-                "",
-                f"Question: {task.question}",
-                "",
-                "Evidence Refs: "
-                + (", ".join(task.evidence_refs) if task.evidence_refs else "N/A"),
-                "",
-                f"Expected Output: {task.expected_output}",
-                "",
-                f"Confidence Requirement: {task.confidence_requirement}",
-                "",
-            ]
+            f"- {item.symbol} ({item.category}): {item.points} points; "
+            f"{item.evidence_ref}."
+            for item in risk.single_asset_alerts
+        )
+    if risk.clusters:
+        lines.extend(["", "Correlated clusters:"])
+        lines.extend(
+            f"- {item.cluster}: {', '.join(item.symbols)}; {item.points} points."
+            for item in risk.clusters
         )
     return lines
 
@@ -482,6 +629,21 @@ def _format_list(values: list[str]) -> str:
     return ", ".join(values)
 
 
+def _data_quality_ref(row: DataCoverageRow) -> str:
+    if row.category == "News":
+        return "DQ:NEWS"
+    if row.category == "Portfolio":
+        suffix = (
+            "SNAPSHOT"
+            if row.item == "cash and holdings"
+            else "CASH_ROLES"
+            if row.item == "cash roles"
+            else "STATE"
+        )
+        return f"DQ:PORTFOLIO:{suffix}"
+    return "DQ:MARKET"
+
+
 def _render_daily_signal_summary(
     daily_signal_summary: DailySignalSummary | None,
 ) -> list[str]:
@@ -509,63 +671,6 @@ def _render_watch_next(report_signals: ReportSignals | None) -> list[str]:
     lines = ["", "Watch next:"]
     for item in report_signals.watch_next[:5]:
         lines.append(f"- {item.subject}: {item.watch}")
-    return lines
-
-
-def _render_data_coverage(
-    data_coverage: DataCoverage | None,
-    news_quality: NewsQualityGate | None,
-) -> list[str]:
-    if data_coverage is None:
-        overall_status = (
-            "data_quality_failed"
-            if news_quality is not None
-            and news_quality.status == "data_quality_review"
-            else "unavailable"
-        )
-        lines = [
-            f"Overall: {overall_status}",
-            "",
-            "No data coverage diagnostics generated.",
-        ]
-    else:
-        overall_status = data_coverage.status
-        if news_quality is not None and news_quality.status == "data_quality_review":
-            overall_status = "data_quality_failed"
-        lines = [
-            f"Overall: {overall_status}",
-            "",
-            "| Category | Item | Status | Rows | Latest | Detail |",
-            "|---|---|---|---:|---|---|",
-        ]
-        for row in data_coverage.rows:
-            lines.append(
-                f"| {row.category} | {row.item} | {row.status} | "
-                f"{row.rows} | {row.latest} | {row.detail} |"
-            )
-        if data_coverage.impacts:
-            lines.extend(["", "Impact:"])
-            lines.extend(f"- {impact}" for impact in data_coverage.impacts)
-
-    if news_quality is not None:
-        precision = (
-            "N/A"
-            if news_quality.entity_precision is None
-            else f"{news_quality.entity_precision:.2%}"
-        )
-        lines.extend(
-            [
-                "",
-                "News quality gate:",
-                f"- Status: {news_quality.status}",
-                f"- Entity precision: {precision}",
-                f"- Precision threshold: {news_quality.precision_threshold:.2%}",
-                f"- news_score: {_format_nullable_score(news_quality.news_score)}",
-                f"- fundamental_score: {_format_nullable_score(news_quality.fundamental_score)}",
-                f"- portfolio_action: {news_quality.portfolio_action}",
-            ]
-        )
-        lines.extend(f"- Reason: {reason}" for reason in news_quality.reasons)
     return lines
 
 
@@ -663,21 +768,6 @@ def _render_macro_context(macro_context: MacroContext | None) -> list[str]:
                 f"| {row.area} | {row.signal} | {row.evidence} | {row.interpretation} |"
             )
     return lines
-
-
-def _render_strategy_rules(news_quality: NewsQualityGate | None) -> list[str]:
-    lines = ["Portfolio action: unavailable", ""]
-    if news_quality is not None and news_quality.status == "data_quality_review":
-        lines.append(
-            "- Data quality circuit breaker is active; news and fundamental scores are null."
-        )
-    lines.append("- No explicit strategy rule configuration is active.")
-    lines.append("- Market evidence is not converted into an automatic portfolio action.")
-    return lines
-
-
-def _format_nullable_score(value: float | None) -> str:
-    return "null" if value is None else f"{value:.2f}"
 
 
 def _render_company_price_bounds(
