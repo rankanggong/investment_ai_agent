@@ -1,12 +1,19 @@
-from datetime import date
+from datetime import date, datetime, timezone
 import json
 from decimal import Decimal
 
 from app.jobs.daily_market_job import generate_daily_report
+from app.models.analysis import (
+    EarningsEstimateObservation,
+    NewsItem,
+    ValuationObservation,
+)
 from app.steward.models import CashPosition, FxConversion, HoldingPosition, StewardState
 from app.steward.storage import StewardRepository, initialize_steward_database
 from app.storage.db import initialize_database
 from app.storage.repositories.report_repo import ReportRepository
+from app.storage.repositories.fundamental_repo import FundamentalRepository
+from app.storage.repositories.news_repo import NewsRepository
 
 
 def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path):
@@ -26,12 +33,64 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
                         "risk_components": ["breadth", "volatility"],
                         "risk_clusters": ["broad_equity_growth"],
                     }
-                ]
+                ],
+                "fundamental_policy": {
+                    "valuation_stale_after_days": 30,
+                    "earnings_revision_stale_after_days": 30,
+                    "earnings_revision_materiality": 0.05,
+                },
+                "strategy_rules": [
+                    {
+                        "id": "qqq_pause_on_negative_revision",
+                        "symbol": "QQQ",
+                        "action": "pause",
+                        "priority": 100,
+                        "blocking": True,
+                        "conditions": [
+                            {
+                                "metric": "earnings_revision_negative",
+                                "operator": "==",
+                                "value": True,
+                            }
+                        ],
+                    }
+                ],
             }
         ),
         encoding="utf-8",
     )
     initialize_database(finance_db)
+    fundamental_repo = FundamentalRepository(finance_db)
+    fundamental_repo.upsert_valuations(
+        [
+            ValuationObservation(
+                "SPY", date(2026, 7, 20), "forward_pe", 22.0, "provider_a"
+            )
+        ]
+    )
+    fundamental_repo.upsert_earnings_estimates(
+        [
+            EarningsEstimateObservation(
+                "QQQ", date(2026, 7, 1), "FY2027", "eps", 10, "provider_a"
+            ),
+            EarningsEstimateObservation(
+                "QQQ", date(2026, 7, 20), "FY2027", "eps", 9, "provider_a"
+            ),
+        ]
+    )
+    NewsRepository(finance_db).upsert_many(
+        [
+            NewsItem(
+                "SPY announces expense ratio fee cut",
+                "https://example.com/spy-fee",
+                "Example",
+                datetime(2026, 7, 20, tzinfo=timezone.utc),
+                "SPY",
+                "google_news_rss",
+                query_symbol="SPY",
+            )
+        ]
+    )
     initialize_steward_database(steward_db)
     StewardRepository(steward_db).replace_state(
         StewardState(
@@ -101,6 +160,16 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     assert "- Impact reason: market_analysis_not_available" in content
     assert '"action_readiness_status": "blocked"' in content
     assert '"portfolio_factor_exposures": {"us_equity": 1.0}' in content
+    assert "Valuation status: available" in content
+    assert "Earnings revision status: available" in content
+    assert "| QQQ | FY2027 | eps |" in content
+    assert "News Entity Pipeline:" in content
+    assert "- Status: available" in content
+    assert "- Deduplicated asset events: 1" in content
+    assert '"valuation_status": "available"' in content
+    assert '"earnings_revision_status": "available"' in content
+    assert '"QQQ:FY2027:eps": "negative"' in content
+    assert '"qqq_pause_on_negative_revision": "triggered"' in content
     assert '"gpt_task_ids": [' in content
     decisions = ReportRepository(finance_db).list_decision_states()
     assert len(decisions) == 1

@@ -46,6 +46,19 @@ class PortfolioFactorDefinition:
 
 
 @dataclass(frozen=True)
+class FundamentalPolicy:
+    valuation_stale_after_days: int | None = None
+    earnings_revision_stale_after_days: int | None = None
+    earnings_revision_materiality: float | None = None
+
+
+@dataclass(frozen=True)
+class NewsPolicy:
+    entity_precision_threshold: float = 0.80
+    max_age_days: int = 7
+
+
+@dataclass(frozen=True)
 class ReportProfile:
     base_currency: str = "CNY"
     target_allocations: dict[str, float] = field(default_factory=dict)
@@ -57,6 +70,10 @@ class ReportProfile:
     daily_budget: DailyBudgetPolicy | None = None
     action_sizing: tuple[ActionSizingPolicy, ...] = ()
     portfolio_factors: tuple[PortfolioFactorDefinition, ...] = ()
+    fundamental_policy: FundamentalPolicy = field(
+        default_factory=FundamentalPolicy
+    )
+    news_policy: NewsPolicy = field(default_factory=NewsPolicy)
 
     def __post_init__(self) -> None:
         target = self.target_allocation or TargetAllocationPolicy(
@@ -96,6 +113,10 @@ def load_report_profile(path: Path | None) -> ReportProfile:
         portfolio_factors=_load_portfolio_factors(
             data.get("portfolio_factors", [])
         ),
+        fundamental_policy=_load_fundamental_policy(
+            data.get("fundamental_policy", {})
+        ),
+        news_policy=_load_news_policy(data.get("news_policy", {})),
     )
 
 
@@ -214,6 +235,35 @@ def _load_portfolio_factors(
     return tuple(definitions)
 
 
+def _load_fundamental_policy(raw: Any) -> FundamentalPolicy:
+    if not isinstance(raw, dict):
+        raise ValueError("fundamental_policy must be an object")
+    valuation_days = _optional_positive_int(
+        raw.get("valuation_stale_after_days"),
+        "valuation stale-after days",
+    )
+    revision_days = _optional_positive_int(
+        raw.get("earnings_revision_stale_after_days"),
+        "earnings revision stale-after days",
+    )
+    materiality = _optional_float(raw.get("earnings_revision_materiality"))
+    if materiality is not None and not 0 <= materiality <= 1:
+        raise ValueError("earnings revision materiality must be between 0 and 1")
+    return FundamentalPolicy(valuation_days, revision_days, materiality)
+
+
+def _load_news_policy(raw: Any) -> NewsPolicy:
+    if not isinstance(raw, dict):
+        raise ValueError("news_policy must be an object")
+    threshold = float(raw.get("entity_precision_threshold", 0.80))
+    if not 0 < threshold <= 1:
+        raise ValueError("news entity precision threshold must be above 0 and at most 1")
+    max_age_days = int(raw.get("max_age_days", 7))
+    if max_age_days <= 0:
+        raise ValueError("news max age days must be positive")
+    return NewsPolicy(threshold, max_age_days)
+
+
 def _load_strategy_rules(raw_rules: Any) -> tuple[StrategyRuleDefinition, ...]:
     if not isinstance(raw_rules, list):
         raise ValueError("strategy_rules must be a list")
@@ -276,6 +326,15 @@ def _optional_non_negative(value: Any, label: str) -> float | None:
     parsed = _optional_float(value)
     if parsed is not None and parsed < 0:
         raise ValueError(f"{label} must be non-negative")
+    return parsed
+
+
+def _optional_positive_int(value: Any, label: str) -> int | None:
+    if value is None:
+        return None
+    parsed = int(value)
+    if parsed <= 0:
+        raise ValueError(f"{label} must be positive")
     return parsed
 
 

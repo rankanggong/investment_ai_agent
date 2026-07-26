@@ -13,6 +13,7 @@ from app.models.analysis import (
     FxCostComparison,
     FxState,
     FreshnessLayer,
+    FundamentalEvidenceState,
     GptAnalysisTask,
     MarketBreadth,
     MarketEvidence,
@@ -247,6 +248,7 @@ def combine_data_quality(
     news_quality: NewsQualityGate | None,
     portfolio_state: PortfolioReportState | None,
     report_date: date,
+    fundamental_state: FundamentalEvidenceState | None = None,
 ) -> DataCoverage:
     rows = list(market_coverage.rows)
     price_rows = [row for row in rows if row.category == "Prices"]
@@ -276,6 +278,37 @@ def combine_data_quality(
                 "N/A",
                 "; ".join(news_quality.reasons) or "News pipeline is blocked.",
             )
+        )
+    if fundamental_state is not None:
+        rows.extend(
+            [
+                DataCoverageRow(
+                    "Fundamentals",
+                    "valuation observations",
+                    fundamental_state.valuation_status,
+                    len(fundamental_state.valuations),
+                    max(
+                        (item.as_of_date for item in fundamental_state.valuations),
+                        default=None,
+                    ).isoformat()
+                    if fundamental_state.valuations
+                    else "N/A",
+                    "; ".join(fundamental_state.reasons) or "Available.",
+                ),
+                DataCoverageRow(
+                    "Fundamentals",
+                    "earnings revisions",
+                    fundamental_state.earnings_revision_status,
+                    len(fundamental_state.revisions),
+                    max(
+                        (item.current_date for item in fundamental_state.revisions),
+                        default=None,
+                    ).isoformat()
+                    if fundamental_state.revisions
+                    else "N/A",
+                    "; ".join(fundamental_state.reasons) or "Available.",
+                ),
+            ]
         )
     if portfolio_state is None:
         rows.append(
@@ -577,6 +610,7 @@ def build_report_use_states(
     news_quality: NewsQualityGate | None,
     profile: ReportProfile | None = None,
     fx_state: FxState | None = None,
+    fundamental_state: FundamentalEvidenceState | None = None,
 ) -> ReportUseStates:
     spy_row = next(
         (
@@ -661,6 +695,22 @@ def build_report_use_states(
         if news_blocked
         else ()
     )
+    if fundamental_state is None:
+        fundamental_status = "blocked"
+        fundamental_reasons = ("fundamental_state_not_evaluated",)
+    else:
+        fundamental_reasons = fundamental_state.reasons
+        statuses = {
+            fundamental_state.valuation_status,
+            fundamental_state.earnings_revision_status,
+        }
+        fundamental_status = (
+            "blocked"
+            if statuses == {"blocked"}
+            else "available"
+            if statuses == {"available"}
+            else "degraded"
+        )
     capabilities = ReportCapabilities(
         market_analysis=CapabilityState(
             market_actionability,
@@ -679,6 +729,9 @@ def build_report_use_states(
         news_analysis=CapabilityState(
             "blocked" if news_blocked else "available",
             news_reasons,
+        ),
+        fundamental_analysis=CapabilityState(
+            fundamental_status, fundamental_reasons
         ),
     )
     overall_status = data_coverage.status if data_coverage else "blocked"
@@ -940,6 +993,7 @@ def build_report_state(
     fx_state: FxState | None = None,
     strategy_decision: StrategyDecisionState | None = None,
     portfolio_impact: PortfolioImpactAnalysis | None = None,
+    fundamental_state: FundamentalEvidenceState | None = None,
 ) -> ReportState:
     liquid_view = portfolio.liquid_asset_allocation
     return ReportState(
@@ -1054,6 +1108,24 @@ def build_report_state(
             if portfolio_impact is not None
             else {}
         ),
+        valuation_status=(
+            fundamental_state.valuation_status
+            if fundamental_state is not None
+            else "blocked"
+        ),
+        earnings_revision_status=(
+            fundamental_state.earnings_revision_status
+            if fundamental_state is not None
+            else "blocked"
+        ),
+        earnings_revision_directions=(
+            {
+                f"{item.symbol}:{item.fiscal_period}:{item.metric}": item.direction
+                for item in fundamental_state.revisions
+            }
+            if fundamental_state is not None
+            else {}
+        ),
         strategy_rule_states=(
             {
                 result.rule_id: result.status
@@ -1087,6 +1159,7 @@ def _serialize_capabilities(states: ReportUseStates) -> dict[str, str]:
             ("investment_action", capabilities.investment_action),
             ("fx_analysis", capabilities.fx_analysis),
             ("news_analysis", capabilities.news_analysis),
+            ("fundamental_analysis", capabilities.fundamental_analysis),
         )
     }
 
@@ -1210,6 +1283,13 @@ def extract_report_state(content: str | None) -> ReportState | None:
                 key: int(value)
                 for key, value in data.get("portfolio_impact_scores", {}).items()
             },
+            valuation_status=data.get("valuation_status", "blocked"),
+            earnings_revision_status=data.get(
+                "earnings_revision_status", "blocked"
+            ),
+            earnings_revision_directions=dict(
+                data.get("earnings_revision_directions", {})
+            ),
             strategy_rule_states=dict(data.get("strategy_rule_states", {})),
             gpt_task_ids=tuple(data.get("gpt_task_ids", [])),
         )
@@ -1272,6 +1352,9 @@ def compare_report_states(
         "proposed_action_currency": "Proposed action currency",
         "portfolio_factor_exposures": "Portfolio factor exposures",
         "portfolio_impact_scores": "Portfolio impact scores",
+        "valuation_status": "Valuation evidence status",
+        "earnings_revision_status": "Earnings revision status",
+        "earnings_revision_directions": "Earnings revision directions",
         "strategy_rule_states": "Strategy rule states",
     }
     changes = [
@@ -1364,6 +1447,7 @@ def build_gpt_tasks(
                 "news": capabilities.news_analysis,
                 "market": capabilities.market_analysis,
                 "fx": capabilities.fx_analysis,
+                "fundamental": capabilities.fundamental_analysis,
             }.get(required_state)
         if capability is not None and capability.status != "available":
             status = (
@@ -1791,6 +1875,11 @@ def _gpt_question_refs(
         )
     if any(term in question for term in ["新闻", "因果", "事件"]):
         return (("STATE:NEWS", "DQ:NEWS"), "news")
+    if any(term in question for term in ["估值", "盈利预期", "盈利修正"]):
+        return (
+            ("FUNDAMENTAL:STATE", "DQ:FUNDAMENTALS"),
+            "fundamental",
+        )
     return (
         tuple(dict.fromkeys(["STATE:MARKET", "BREADTH:MARKET", *market_refs])),
         "market",

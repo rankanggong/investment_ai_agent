@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 
 from app.collectors.price_collector import load_price_csv
+from app.collectors.fundamental_csv_collector import load_fundamental_csv
+from app.collectors.google_news_collector import collect_google_news
 from app.collectors.yfinance_price_collector import (
     choose_yfinance_period,
     collect_yfinance_prices,
@@ -17,6 +19,8 @@ from app.steward.job import (
 from app.steward.storage import initialize_steward_database
 from app.storage.db import initialize_database
 from app.storage.repositories.price_repo import PriceRepository
+from app.storage.repositories.fundamental_repo import FundamentalRepository
+from app.storage.repositories.news_repo import NewsRepository
 
 
 DEFAULT_DB_PATH = Path(os.environ.get("FINANCE_AGENT_DB_PATH", "data/finance.db"))
@@ -55,6 +59,20 @@ def build_parser() -> argparse.ArgumentParser:
             "By default the collector chooses an incremental period per symbol."
         ),
     )
+
+    fundamentals = collect_subparsers.add_parser(
+        "fundamentals", help="Import valuation and earnings-estimate observations"
+    )
+    fundamentals.add_argument("--csv", type=Path, required=True)
+    fundamentals.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
+
+    news = collect_subparsers.add_parser(
+        "news", help="Collect candidate headlines for entity linking"
+    )
+    news.add_argument("--google-rss", action="store_true", required=True)
+    news.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
+    news.add_argument("--symbols", nargs="+")
+    news.add_argument("--watchlist", type=Path, default=DEFAULT_WATCHLIST_PATH)
 
     report = subparsers.add_parser("report", help="Generate reports")
     report_subparsers = report.add_subparsers(dest="report_command", required=True)
@@ -167,6 +185,33 @@ def main(argv: list[str] | None = None) -> int:
                     "this can happen without prior requests."
                 )
                 print("Try another network later or import a CSV.")
+        return 0
+
+    if args.command == "collect" and args.collect_command == "fundamentals":
+        initialize_database(args.db)
+        imported = load_fundamental_csv(args.csv)
+        repo = FundamentalRepository(args.db)
+        repo.upsert_valuations(imported.valuations)
+        repo.upsert_earnings_estimates(imported.earnings_estimates)
+        print(
+            f"Imported {len(imported.valuations)} valuation rows and "
+            f"{len(imported.earnings_estimates)} earnings-estimate rows into "
+            f"{args.db}"
+        )
+        return 0
+
+    if args.command == "collect" and args.collect_command == "news":
+        initialize_database(args.db)
+        symbols = (
+            [symbol.upper() for symbol in args.symbols]
+            if args.symbols
+            else [asset.symbol for asset in load_watchlist(args.watchlist).assets]
+        )
+        collection = collect_google_news(symbols)
+        NewsRepository(args.db).upsert_many(collection.items)
+        print(f"Imported {len(collection.items)} candidate news rows into {args.db}")
+        if collection.failed_symbols:
+            print(f"Failed symbols: {', '.join(collection.failed_symbols)}")
         return 0
 
     if args.command == "report" and args.report_command == "daily":

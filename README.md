@@ -9,17 +9,19 @@ The active workflow is intentionally data-first:
   context, plan impact, and company price review bounds.
 - Personal financial analysis uses one supplied state CSV for cash positions,
   holding snapshots, and FX conversions.
-- RSS/news collection and news-derived report sections are currently disabled.
-  The existing news schema and implementation remain in the repository so the
-  feature can be restored without deleting historical data.
+- Candidate news collection is optional. Collected headlines must pass entity
+  linking, quality gating, and asset-specific event deduplication before they
+  appear as evidence.
 
-The dormant news path is fail-closed: query symbols are collection provenance,
+The news evidence path is fail-closed: query symbols are collection provenance,
 not entity links. Articles must pass ticker/name entity linking before they can
 be clustered; ETF, company, index, and commodity events use separate schemas
-and are deduplicated at the event level. If entity precision is below 80%, news
-and fundamental scores are null and portfolio action is unavailable.
+and are deduplicated at the event level. If entity precision is below the
+configured threshold, news analysis is blocked. Passing the gate makes linked
+news available as evidence;
+it does not create a score or portfolio action.
 
-The market workflow is price-only:
+The workflow remains local and data-first:
 
 ```bash
 cd /home/ssm-user/investment_ai_agent
@@ -31,6 +33,8 @@ python -m pip install -e ".[dev]"
 python -m app.main init-db
 python -m app.main collect prices --csv path/to/prices.csv
 python -m app.main collect prices --yfinance
+python -m app.main collect fundamentals --csv path/to/fundamentals.csv
+python -m app.main collect news --google-rss --symbols SPY QQQ
 python -m app.main report daily
 ```
 
@@ -52,6 +56,17 @@ CSV imports require these columns:
 ```text
 symbol,date,open,high,low,close,adjusted_close,volume
 ```
+
+Fundamental CSV imports use:
+
+```text
+record_type,symbol,as_of_date,metric,value,period,currency,source
+```
+
+`record_type` is `valuation` or `earnings_estimate`. Earnings revisions compare
+only observations with the same symbol, fiscal period, metric, and source.
+Start from `data/templates/fundamental_observations_template.csv`; the template
+contains only the required header and does not supply example values.
 
 Live collection updates every asset in `config/watchlist.yaml`. To collect only
 selected symbols:
@@ -92,6 +107,10 @@ The daily report contains:
   risk scores, with single-asset alerts distinct from correlated clusters;
 - configured cost-basis factor-tag exposure and an explicit mapping from market
   risk components/clusters to portfolio impact screening scores;
+- sourced valuation observations and like-for-like earnings estimate revisions,
+  with freshness and materiality gates;
+- candidate-news entity linking, precision gating, and deduplicated
+  asset-specific events;
 - explicit FX state with USD coverage, latest USD/CNH spot, weighted all-in
   conversion cost basis, and their percentage difference;
   tracked-universe breadth, VIX, and RSP-versus-SPY evidence;

@@ -498,6 +498,52 @@ class FxState:
 
 
 @dataclass(frozen=True)
+class ValuationObservation:
+    symbol: str
+    as_of_date: date
+    metric: str
+    value: float
+    source: str
+    currency: str | None = None
+    period: str | None = None
+
+
+@dataclass(frozen=True)
+class EarningsEstimateObservation:
+    symbol: str
+    as_of_date: date
+    fiscal_period: str
+    metric: str
+    value: float
+    source: str
+
+
+@dataclass(frozen=True)
+class EarningsRevision:
+    symbol: str
+    fiscal_period: str
+    metric: str
+    previous_date: date
+    current_date: date
+    previous_value: float
+    current_value: float
+    change_pct: float | None
+    direction: str
+    material: bool | None
+    source: str
+
+
+@dataclass(frozen=True)
+class FundamentalEvidenceState:
+    valuation_status: str
+    earnings_revision_status: str
+    valuations: tuple[ValuationObservation, ...]
+    revisions: tuple[EarningsRevision, ...]
+    fundamental_flags: dict[str, bool]
+    reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class GptAnalysisTask:
     question: str
     evidence_refs: tuple[str, ...]
@@ -526,6 +572,11 @@ class ReportCapabilities:
     investment_action: CapabilityState
     fx_analysis: CapabilityState
     news_analysis: CapabilityState
+    fundamental_analysis: CapabilityState = field(
+        default_factory=lambda: CapabilityState(
+            "blocked", ("fundamental_state_not_evaluated",)
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -604,6 +655,9 @@ class ReportState:
         default_factory=dict
     )
     portfolio_impact_scores: dict[str, int] = field(default_factory=dict)
+    valuation_status: str = "blocked"
+    earnings_revision_status: str = "blocked"
+    earnings_revision_directions: dict[str, str] = field(default_factory=dict)
     strategy_rule_states: dict[str, str] = field(default_factory=dict)
     gpt_task_ids: tuple[str, ...] = ()
 

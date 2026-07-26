@@ -56,6 +56,16 @@ def test_entity_linker_rejects_ordinary_word_spy_and_fails_closed():
     assert all("film" not in headline.casefold() for cluster in clusters for headline in cluster.representative_headlines)
 
 
+def test_symbol_only_entity_name_does_not_bypass_ambiguous_ticker_check():
+    result = link_news_entities(
+        [item("A new spy film opens", "SPY", "https://example.com/film")],
+        [AssetEntity("SPY", "SPY", "etf")],
+    )
+
+    assert result.linked_items == []
+    assert result.rejected_items[0].entity_confidence == 0.20
+
+
 def test_asset_types_use_distinct_event_schemas_and_etf_dividend_noise_is_ignored():
     linked = link_news_entities(
         items=[
@@ -103,6 +113,9 @@ def test_multiple_articles_about_one_event_are_counted_once():
 
     events = analyze_asset_events(linked.linked_items)
 
+    assert linked.gate.status == "available"
+    assert linked.gate.portfolio_action == "unavailable"
+    assert linked.gate.news_score is None
     assert len(events) == 1
     assert isinstance(events[0], CompanyEvent)
     assert events[0].event_type == "earnings_release"

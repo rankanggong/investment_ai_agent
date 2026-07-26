@@ -140,6 +140,15 @@ def test_load_report_profile_reads_structured_target_budget_and_action_sizing(
                         "risk_clusters": ["broad_equity_growth"],
                     }
                 ],
+                "fundamental_policy": {
+                    "valuation_stale_after_days": 45,
+                    "earnings_revision_stale_after_days": 30,
+                    "earnings_revision_materiality": 0.05,
+                },
+                "news_policy": {
+                    "entity_precision_threshold": 0.9,
+                    "max_age_days": 5,
+                },
             }
         ),
         encoding="utf-8",
@@ -156,3 +165,7 @@ def test_load_report_profile_reads_structured_target_budget_and_action_sizing(
     assert profile.portfolio_factors[0].risk_components == (
         "breadth", "volatility"
     )
+    assert profile.fundamental_policy.valuation_stale_after_days == 45
+    assert profile.fundamental_policy.earnings_revision_materiality == 0.05
+    assert profile.news_policy.entity_precision_threshold == 0.9
+    assert profile.news_policy.max_age_days == 5

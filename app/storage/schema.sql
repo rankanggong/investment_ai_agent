@@ -62,3 +62,28 @@ CREATE TABLE IF NOT EXISTS news_items (
   source TEXT NOT NULL,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS valuation_observations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  as_of_date TEXT NOT NULL,
+  metric TEXT NOT NULL,
+  value REAL NOT NULL,
+  currency TEXT,
+  period TEXT,
+  source TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(symbol, as_of_date, metric, source)
+);
+
+CREATE TABLE IF NOT EXISTS earnings_estimate_observations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  as_of_date TEXT NOT NULL,
+  fiscal_period TEXT NOT NULL,
+  metric TEXT NOT NULL,
+  value REAL NOT NULL,
+  source TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(symbol, as_of_date, fiscal_period, metric, source)
+);

@@ -85,6 +85,30 @@ _Avoid_: News confidence
 One deduplicated real-world occurrence supported by one or more articles. ETF, company, index, and commodity events use separate schemas.
 _Avoid_: Article, headline
 
+**News Candidate**:
+A collected headline and URL associated with the Query Symbol that retrieved it,
+before entity linking. It is not yet asset evidence.
+_Avoid_: Asset Event, related article
+
+**Valuation Observation**:
+A sourced value for one named valuation metric, asset, and as-of date. It is an
+external observation, not an internally estimated fair value.
+_Avoid_: Price target, intrinsic value
+
+**Earnings Estimate Observation**:
+A sourced consensus estimate for one asset, fiscal period, metric, and as-of date.
+_Avoid_: Reported earnings, realized result
+
+**Earnings Revision**:
+The like-for-like change between the two latest Earnings Estimate Observations
+from the same source, asset, fiscal period, and metric.
+_Avoid_: Earnings growth, earnings surprise
+
+**Fundamental Evidence State**:
+The availability and freshness state of Valuation Observations and Earnings
+Revisions, including configured materiality and resulting deterministic flags.
+_Avoid_: Fundamental score, investment thesis
+
 **Data Quality Gate**:
 A fail-closed decision that makes news-derived scores null and portfolio action unavailable when entity precision is below threshold.
 _Avoid_: Warning

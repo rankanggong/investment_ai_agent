@@ -4,17 +4,20 @@ from pathlib import Path
 
 from app.models.analysis import (
     CompanyPriceBounds,
+    AssetEvent,
     DataCoverage,
     DataCoverageRow,
     DailySignalSummary,
     FxCostComparison,
     FxState,
+    FundamentalEvidenceState,
     GptAnalysisTask,
     MarketBreadth,
     MarketEvidence,
     MarketState,
     MacroContext,
     NewsQualityGate,
+    NewsCluster,
     NewsState,
     PortfolioAllocationView,
     PortfolioDecisionState,
@@ -66,6 +69,9 @@ def render_daily_report(
     report_state: ReportState | None = None,
     price_sources: dict[str, str] | None = None,
     portfolio_impact: PortfolioImpactAnalysis | None = None,
+    fundamental_state: FundamentalEvidenceState | None = None,
+    news_clusters: list[NewsCluster] | None = None,
+    asset_events: list[AssetEvent] | None = None,
 ) -> str:
     effective_risk = risk_assessment or RiskAssessment(
         score=0,
@@ -146,6 +152,9 @@ def render_daily_report(
     lines.extend(["", "### Portfolio Factor Exposure and Market Impact", ""])
     lines.extend(["Evidence Ref: PORTFOLIO:FACTOR_IMPACT", ""])
     lines.extend(_render_portfolio_impact(portfolio_impact))
+    lines.extend(["", "### Fundamental Evidence", ""])
+    lines.extend(["Evidence Ref: FUNDAMENTAL:STATE", ""])
+    lines.extend(_render_fundamental_state(fundamental_state))
     lines.extend(
         [
             "",
@@ -168,6 +177,8 @@ def render_daily_report(
     lines.extend(["", "Market Breadth:"])
     lines.extend(["Evidence Refs: BREADTH:MARKET, BREADTH:SECTOR_ROTATION"])
     lines.extend(_render_market_breadth(market_breadth))
+    lines.extend(["", "News Entity Pipeline:", ""])
+    lines.extend(_render_news_pipeline(news_quality, news_clusters, asset_events))
     lines.extend(
         [
             "",
@@ -323,6 +334,7 @@ def _render_data_quality_issues(
             ("investment_action", capabilities.investment_action),
             ("fx_analysis", capabilities.fx_analysis),
             ("news_analysis", capabilities.news_analysis),
+            ("fundamental_analysis", capabilities.fundamental_analysis),
         ):
             lines.append(
                 f"| {name} | {capability.status} | "
@@ -519,6 +531,78 @@ def _render_key_evidence(evidence: list[MarketEvidence]) -> list[str]:
             f"{_format_multiple(row.atr_multiple)} | "
             f"{_format_percent(row.absolute_move_percentile_252d)} | "
             f"{row.short_term_state} | {_escape_cell(row.detection_reason)} |"
+        )
+    return lines
+
+
+def _render_fundamental_state(
+    state: FundamentalEvidenceState | None,
+) -> list[str]:
+    if state is None:
+        return ["Status: blocked", "- Reason: fundamental state was not evaluated."]
+    lines = [
+        f"Valuation status: {state.valuation_status}",
+        f"Earnings revision status: {state.earnings_revision_status}",
+        "",
+        "Valuation observations:",
+        "",
+        "| Symbol | As Of | Metric | Value | Currency | Period | Source |",
+        "|---|---|---|---:|---|---|---|",
+    ]
+    if state.valuations:
+        lines.extend(
+            f"| {item.symbol} | {item.as_of_date.isoformat()} | {item.metric} | "
+            f"{item.value:.4f} | {item.currency or 'N/A'} | "
+            f"{item.period or 'N/A'} | {item.source} |"
+            for item in state.valuations
+        )
+    else:
+        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A |")
+    lines.extend([
+        "",
+        "Earnings estimate revisions:",
+        "",
+        "| Symbol | Fiscal Period | Metric | Previous | Current | Change | Direction | Material | Source |",
+        "|---|---|---|---:|---:|---:|---|---|---|",
+    ])
+    if state.revisions:
+        lines.extend(
+            f"| {item.symbol} | {item.fiscal_period} | {item.metric} | "
+            f"{item.previous_value:.4f} ({item.previous_date.isoformat()}) | "
+            f"{item.current_value:.4f} ({item.current_date.isoformat()}) | "
+            f"{_format_percent(item.change_pct)} | {item.direction} | "
+            f"{'yes' if item.material else 'no' if item.material is False else 'N/A'} | "
+            f"{item.source} |"
+            for item in state.revisions
+        )
+    else:
+        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |")
+    lines.extend(f"- Reason: {reason}" for reason in state.reasons)
+    return lines
+
+
+def _render_news_pipeline(
+    quality: NewsQualityGate | None,
+    clusters: list[NewsCluster] | None,
+    events: list[AssetEvent] | None,
+) -> list[str]:
+    lines = [
+        "Evidence Ref: NEWS:ENTITY_PIPELINE",
+        f"- Status: {quality.status if quality else 'blocked'}",
+        f"- Entity precision: "
+        f"{_format_percent(quality.entity_precision if quality else None)}",
+    ]
+    if quality:
+        lines.extend(f"- Reason: {reason}" for reason in quality.reasons)
+    lines.extend([
+        f"- News clusters: {len(clusters or [])}",
+        f"- Deduplicated asset events: {len(events or [])}",
+    ])
+    for event in events or []:
+        lines.append(
+            f"- {event.related_symbol} / {event.event_type} / "
+            f"{event.event_date}: {event.headline} "
+            f"({event.article_count} article(s))."
         )
     return lines
 
@@ -956,7 +1040,7 @@ def _format_money_decimal(value: Decimal) -> str:
 
 def _render_macro_context(macro_context: MacroContext | None) -> list[str]:
     if macro_context is None:
-        return ["Deferred to Phase 3."]
+        return ["Macro context was not generated."]
 
     lines = [
         f"Rates: {macro_context.rates_context}",

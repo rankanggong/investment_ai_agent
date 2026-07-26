@@ -3,6 +3,7 @@ from datetime import date
 from pathlib import Path
 
 from app.analyzers.company_price_bounds_analyzer import analyze_company_price_bounds
+from app.analyzers.asset_event_analyzer import analyze_asset_events
 from app.analyzers.data_coverage_analyzer import analyze_data_coverage
 from app.analyzers.daily_report_state_analyzer import (
     analyze_fx_state,
@@ -20,19 +21,24 @@ from app.analyzers.daily_report_state_analyzer import (
     select_key_market_evidence,
 )
 from app.analyzers.daily_signal_summary_analyzer import analyze_daily_signal_summary
+from app.analyzers.fundamental_evidence_analyzer import analyze_fundamental_evidence
 from app.analyzers.macro_context_analyzer import analyze_macro_context
+from app.analyzers.news_cluster_analyzer import analyze_news_clusters
+from app.analyzers.news_entity_linker import link_news_entities
 from app.analyzers.price_move_analyzer import analyze_price_moves
 from app.analyzers.portfolio_impact_analyzer import analyze_portfolio_impact
 from app.analyzers.report_signal_analyzer import analyze_report_signals
 from app.analyzers.sector_rotation_analyzer import analyze_sector_rotation
 from app.analyzers.strategy_rule_engine import evaluate_strategy_decision
 from app.config import load_report_profile, load_watchlist
-from app.models.analysis import NewsQualityGate
+from app.models.analysis import AssetEntity
 from app.outputs.markdown_writer import render_daily_report, write_daily_report
 from app.steward.models import PortfolioReportState
 from app.steward.storage import StewardRepository, initialize_steward_database
 from app.storage.db import initialize_database
 from app.storage.repositories.price_repo import PriceRepository
+from app.storage.repositories.fundamental_repo import FundamentalRepository
+from app.storage.repositories.news_repo import NewsRepository
 from app.storage.repositories.report_repo import ReportRepository
 
 
@@ -50,6 +56,7 @@ def generate_daily_report(
     repo = PriceRepository(db_path)
     history = {symbol: repo.get_prices(symbol) for symbol in [asset.symbol for asset in watchlist.assets]}
     signals = analyze_price_moves(history)
+    effective_date = report_date or _latest_report_date(history) or date.today()
     sector_rotation = analyze_sector_rotation(
         signals,
         sector_symbols=watchlist.symbols_for_group("sectors"),
@@ -74,14 +81,30 @@ def generate_daily_report(
         history,
         watchlist.symbols_for_group("popular_companies"),
     )
-    news_quality = NewsQualityGate(
-        entity_precision=None,
-        precision_threshold=0.80,
-        status="disabled",
-        news_score=None,
-        fundamental_score=None,
-        portfolio_action="unavailable",
-        reasons=["News collection is disabled."],
+    news_candidates = [
+        item
+        for item in NewsRepository(db_path).get_recent_items(limit=200)
+        if item.published_at is not None
+        and 0 <= (effective_date - item.published_at.date()).days
+        <= report_profile.news_policy.max_age_days
+    ]
+    news_links = link_news_entities(
+        news_candidates,
+        _asset_entities(watchlist.assets),
+        report_profile.news_policy.entity_precision_threshold,
+    )
+    news_quality = news_links.gate
+    linked_news = (
+        news_links.linked_items if news_quality.status == "available" else []
+    )
+    news_clusters = analyze_news_clusters(linked_news)
+    asset_events = analyze_asset_events(linked_news)
+    fundamental_repo = FundamentalRepository(db_path)
+    fundamental_state = analyze_fundamental_evidence(
+        fundamental_repo.get_valuations(),
+        fundamental_repo.get_earnings_estimates(),
+        report_profile.fundamental_policy,
+        effective_date,
     )
     daily_signal_summary = analyze_daily_signal_summary(
         signals,
@@ -93,8 +116,8 @@ def generate_daily_report(
         price_signals=signals,
         sector_rotation=sector_rotation,
         macro_context=macro_context,
-        news_clusters=[],
-        fundamental_events=[],
+        news_clusters=news_clusters,
+        fundamental_events=asset_events,
         data_coverage=data_coverage,
     )
     portfolio_state = None
@@ -106,12 +129,12 @@ def generate_daily_report(
             fx_conversions=steward_state.fx_conversions,
             cash_positions=steward_state.cash_positions,
         )
-    effective_date = report_date or _latest_report_date(history) or date.today()
     data_coverage = combine_data_quality(
         data_coverage,
         news_quality,
         portfolio_state,
         effective_date,
+        fundamental_state,
     )
     portfolio_summary = analyze_portfolio_summary(
         portfolio_state,
@@ -141,6 +164,7 @@ def generate_daily_report(
         news_quality,
         report_profile,
         fx_state,
+        fundamental_state,
     )
     portfolio_impact = analyze_portfolio_impact(
         portfolio_summary,
@@ -161,6 +185,7 @@ def generate_daily_report(
         macro_context,
         market_breadth,
         use_states,
+        fundamental_flags=fundamental_state.fundamental_flags,
         daily_budget=report_profile.daily_budget,
         action_sizing=report_profile.action_sizing,
     )
@@ -175,6 +200,7 @@ def generate_daily_report(
         fx_state,
         strategy_decision,
         portfolio_impact,
+        fundamental_state,
     )
     report_repo = ReportRepository(db_path)
     previous_state = extract_report_state(
@@ -221,6 +247,9 @@ def generate_daily_report(
         strategy_rules=strategy_rules,
         strategy_decision=strategy_decision,
         portfolio_impact=portfolio_impact,
+        fundamental_state=fundamental_state,
+        news_clusters=news_clusters,
+        asset_events=asset_events,
         changes=changes,
         gpt_tasks=gpt_tasks,
         report_state=report_state,
@@ -242,6 +271,23 @@ def _latest_report_date(history: dict[str, list]) -> date | None:
     if not dates:
         return None
     return max(dates)
+
+
+def _asset_entities(assets: list) -> list[AssetEntity]:
+    kind_by_type = {
+        "equity": "company",
+        "etf": "etf",
+        "index": "index",
+        "commodity": "commodity",
+    }
+    return [
+        AssetEntity(
+            asset.symbol,
+            asset.name or asset.symbol,
+            kind_by_type.get(asset.asset_type or "", "etf"),
+        )
+        for asset in assets
+    ]
 
 
 def _previous_report_file_content(

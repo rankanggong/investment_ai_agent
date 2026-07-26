@@ -58,11 +58,13 @@ def link_news_entities(
 
 
 def _match_entity(title: str, entity: AssetEntity) -> tuple[float, str]:
+    symbol = entity.symbol.upper()
     for alias in [entity.name, *entity.aliases]:
+        if alias == symbol:
+            continue
         if alias and _contains_phrase(title, alias):
             return 0.99, f"title contains entity name or alias: {alias}"
 
-    symbol = entity.symbol.upper()
     if re.search(rf"(?<![A-Za-z0-9]){re.escape(symbol)}(?![A-Za-z0-9])", title):
         return 0.95, f"title contains exact uppercase ticker: {symbol}"
 
@@ -75,7 +77,12 @@ def _match_entity(title: str, entity: AssetEntity) -> tuple[float, str]:
 def _contains_phrase(title: str, phrase: str) -> bool:
     normalized_title = " ".join(title.casefold().split())
     normalized_phrase = " ".join(phrase.casefold().split())
-    return normalized_phrase in normalized_title
+    return bool(
+        re.search(
+            rf"(?<![a-z0-9]){re.escape(normalized_phrase)}(?![a-z0-9])",
+            normalized_title,
+        )
+    )
 
 
 def _deduplicate_candidates(items: list[NewsItem]) -> list[NewsItem]:
@@ -121,8 +128,8 @@ def _quality_gate(
         entity_precision=entity_precision,
         precision_threshold=precision_threshold,
         status="available",
-        news_score=0.0,
-        fundamental_score=0.0,
-        portfolio_action="available",
+        news_score=None,
+        fundamental_score=None,
+        portfolio_action="unavailable",
         reasons=[],
     )

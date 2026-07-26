@@ -320,14 +320,23 @@ def test_market_and_portfolio_state_round_trip_and_compare():
         state,
         portfolio_factor_exposures={"us_equity": 1.0},
         portfolio_impact_scores={"us_equity": 8},
+        valuation_status="available",
+        earnings_revision_status="available",
+        earnings_revision_directions={"QQQ:FY2027:eps": "negative"},
     )
     changed_restored = extract_report_state(serialize_report_state(changed))
     assert changed_restored is not None
     assert changed_restored.portfolio_factor_exposures == {"us_equity": 1.0}
     assert changed_restored.portfolio_impact_scores == {"us_equity": 8}
+    assert changed_restored.valuation_status == "available"
+    assert changed_restored.earnings_revision_directions == {
+        "QQQ:FY2027:eps": "negative"
+    }
     changes = compare_report_states(state, changed)
     assert any("Portfolio factor exposures" in item for item in changes)
     assert any("Portfolio impact scores" in item for item in changes)
+    assert any("Valuation evidence status" in item for item in changes)
+    assert any("Earnings revision directions" in item for item in changes)
     assert compare_report_states(restored, state) == ["No state changes detected."]
 
 
