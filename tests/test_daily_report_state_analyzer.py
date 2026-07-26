@@ -332,6 +332,12 @@ def test_market_and_portfolio_state_round_trip_and_compare():
         valuation_status="available",
         earnings_revision_status="available",
         earnings_revision_directions={"QQQ:FY2027:eps": "negative"},
+        decision_evidence_status="degraded",
+        decision_evidence_symbols=("QQQ", "VOO"),
+        decision_evidence_review_flags=(
+            "QQQ:material_negative_earnings_revision",
+        ),
+        news_entity_pipeline_status="available",
     )
     changed_restored = extract_report_state(serialize_report_state(changed))
     assert changed_restored is not None
@@ -344,6 +350,9 @@ def test_market_and_portfolio_state_round_trip_and_compare():
     assert changed_restored.earnings_revision_directions == {
         "QQQ:FY2027:eps": "negative"
     }
+    assert changed_restored.decision_evidence_status == "degraded"
+    assert changed_restored.decision_evidence_symbols == ("QQQ", "VOO")
+    assert changed_restored.news_entity_pipeline_status == "available"
     changes = compare_report_states(state, changed)
     assert any("Portfolio factor exposures" in item for item in changes)
     assert any("Portfolio impact scores" in item for item in changes)
@@ -351,6 +360,8 @@ def test_market_and_portfolio_state_round_trip_and_compare():
     assert any("Decision transition" in item for item in changes)
     assert any("Valuation evidence status" in item for item in changes)
     assert any("Earnings revision directions" in item for item in changes)
+    assert any("Decision evidence status" in item for item in changes)
+    assert any("News entity pipeline status" in item for item in changes)
     assert compare_report_states(restored, state) == ["No state changes detected."]
 
 

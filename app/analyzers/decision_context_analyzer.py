@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import date
+import json
 
 from app.config import ReportProfile
 from app.models.analysis import (
     DecisionContext,
+    DecisionEvidenceState,
     DecisionHistoryRecord,
     PortfolioImpactAnalysis,
     PortfolioSummary,
@@ -21,6 +24,7 @@ def build_decision_context(
     profile: ReportProfile,
     decision: StrategyDecisionState,
     previous: DecisionHistoryRecord | None = None,
+    decision_evidence: DecisionEvidenceState | None = None,
 ) -> DecisionContext:
     """Combine market, portfolio, funding, and permission state for one decision."""
     readiness = decision.action_readiness
@@ -47,7 +51,12 @@ def build_decision_context(
         *context_gaps,
         *readiness.reasons,
         *execution.reasons,
+        *(decision_evidence.reasons if decision_evidence else ()),
     ]
+    if decision_evidence is not None and decision_evidence.status != "available":
+        context_gaps.append(
+            f"decision_evidence_{decision_evidence.status}"
+        )
     if not profile.target_allocations:
         reasons.append("target_allocation_not_configured")
         context_gaps.append("target_allocation_not_configured")
@@ -81,6 +90,7 @@ def build_decision_context(
                 "STATE:EXECUTION_READINESS",
                 *readiness.evidence_refs,
                 *(dominant.evidence_refs if dominant else ()),
+                *(decision_evidence.evidence_refs if decision_evidence else ()),
             ]
         )
     )
@@ -110,16 +120,18 @@ def build_decision_context(
         permission_status=execution.permission_status,
         proposed_amount=execution.proposed_amount,
         proposed_currency=execution.currency,
-        transition=_decision_transition(previous, decision),
+        transition=_decision_transition(previous, decision, decision_evidence),
         previous_report_date=previous.report_date if previous else None,
         reasons=tuple(dict.fromkeys(reasons)),
         evidence_refs=evidence_refs,
+        decision_evidence=decision_evidence,
     )
 
 
 def _decision_transition(
     previous: DecisionHistoryRecord | None,
     current: StrategyDecisionState,
+    evidence: DecisionEvidenceState | None = None,
 ) -> str:
     if previous is None:
         return "baseline"
@@ -143,4 +155,10 @@ def _decision_transition(
         return "permission_changed"
     if previous.proposed_amount != execution.proposed_amount:
         return "proposed_amount_changed"
+    previous_evidence = previous.context.get("decision_evidence")
+    current_evidence = asdict(evidence) if evidence is not None else None
+    if json.dumps(previous_evidence, sort_keys=True) != json.dumps(
+        current_evidence, sort_keys=True
+    ):
+        return "decision_evidence_changed"
     return "no_change"

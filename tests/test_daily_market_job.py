@@ -158,6 +158,8 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     assert "rule_execution_permission_not_configured" in content
     assert "Decision Context:" in content
     assert "- Transition: baseline" in content
+    assert "Decision evidence: degraded" in content
+    assert "QQQ:material_negative_earnings_revision" in content
     assert "### Portfolio Factor Exposure and Market Impact" in content
     assert "| us_equity | 100.00% | VOO |" in content
     assert "Portfolio impact status: blocked" in content
@@ -173,6 +175,8 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     assert "- Deduplicated asset events: 1" in content
     assert '"valuation_status": "available"' in content
     assert '"earnings_revision_status": "available"' in content
+    assert '"decision_evidence_status": "degraded"' in content
+    assert '"news_entity_pipeline_status": "available"' in content
     assert '"QQQ:FY2027:eps": "negative"' in content
     assert '"qqq_pause_on_negative_revision": "triggered"' in content
     assert '"gpt_task_ids": [' in content
@@ -187,3 +191,7 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     )
     assert decisions[0].context["transition"] == "baseline"
     assert decisions[0].context["dominant_factor_id"] is None
+    assert decisions[0].context["decision_evidence"]["status"] == "degraded"
+    assert decisions[0].context["decision_evidence"]["assets"][0][
+        "symbol"
+    ] == "QQQ"

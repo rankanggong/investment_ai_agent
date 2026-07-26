@@ -109,6 +109,13 @@ The availability and freshness state of Valuation Observations and Earnings
 Revisions, including configured materiality and resulting deterministic flags.
 _Avoid_: Fundamental score, investment thesis
 
+**Decision Evidence State**:
+The quality-gated, asset-level view of Valuation Observations, Earnings
+Revisions, and linked Asset Events for current Holding Snapshots and the current
+Decision Candidate. It records evidence and review flags but does not infer
+news sentiment or create an action.
+_Avoid_: Recommendation, conviction score, news-driven trade signal
+
 **Data Quality Gate**:
 A fail-closed decision that makes news-derived scores null and portfolio action unavailable when entity precision is below threshold.
 _Avoid_: Warning
@@ -223,7 +230,8 @@ _Avoid_: Execution authorization, order
 **Decision Context**:
 One report-date snapshot that joins Market Risk, Portfolio Impact, current and
 target allocation, Daily Investment Budget, Investment Cash, Decision Candidate,
-Rule Execution Permission, and both readiness states, with evidence references.
+Rule Execution Permission, both readiness states, and the Decision Evidence
+State, with evidence references.
 Its status describes context completeness, not permission to trade.
 _Avoid_: Recommendation, order ticket, model rationale
 

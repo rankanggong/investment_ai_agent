@@ -1163,6 +1163,33 @@ def build_report_state(
             if fundamental_state is not None
             else {}
         ),
+        decision_evidence_status=(
+            decision_context.decision_evidence.status
+            if decision_context is not None
+            and decision_context.decision_evidence is not None
+            else "blocked"
+        ),
+        decision_evidence_symbols=(
+            tuple(
+                item.symbol
+                for item in decision_context.decision_evidence.assets
+            )
+            if decision_context is not None
+            and decision_context.decision_evidence is not None
+            else ()
+        ),
+        decision_evidence_review_flags=(
+            decision_context.decision_evidence.review_flags
+            if decision_context is not None
+            and decision_context.decision_evidence is not None
+            else ()
+        ),
+        news_entity_pipeline_status=(
+            decision_context.decision_evidence.news_entity_status
+            if decision_context is not None
+            and decision_context.decision_evidence is not None
+            else "disabled"
+        ),
         strategy_rule_states=(
             {
                 result.rule_id: result.status
@@ -1341,6 +1368,18 @@ def extract_report_state(content: str | None) -> ReportState | None:
             earnings_revision_directions=dict(
                 data.get("earnings_revision_directions", {})
             ),
+            decision_evidence_status=data.get(
+                "decision_evidence_status", "blocked"
+            ),
+            decision_evidence_symbols=tuple(
+                data.get("decision_evidence_symbols", [])
+            ),
+            decision_evidence_review_flags=tuple(
+                data.get("decision_evidence_review_flags", [])
+            ),
+            news_entity_pipeline_status=data.get(
+                "news_entity_pipeline_status", "disabled"
+            ),
             strategy_rule_states=dict(data.get("strategy_rule_states", {})),
             gpt_task_ids=tuple(data.get("gpt_task_ids", [])),
         )
@@ -1412,6 +1451,10 @@ def compare_report_states(
         "valuation_status": "Valuation evidence status",
         "earnings_revision_status": "Earnings revision status",
         "earnings_revision_directions": "Earnings revision directions",
+        "decision_evidence_status": "Decision evidence status",
+        "decision_evidence_symbols": "Decision evidence symbols",
+        "decision_evidence_review_flags": "Decision evidence review flags",
+        "news_entity_pipeline_status": "News entity pipeline status",
         "strategy_rule_states": "Strategy rule states",
     }
     changes = [

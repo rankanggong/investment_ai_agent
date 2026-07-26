@@ -112,6 +112,10 @@ The daily report contains:
   with freshness and materiality gates;
 - candidate-news entity linking, precision gating, and deduplicated
   asset-specific events;
+- asset-level Decision Evidence for current holdings and the Decision Candidate;
+  valuation remains an observation without an action threshold, earnings
+  revisions retain direction/materiality, and news events require primary-source
+  review rather than inferred sentiment;
 - explicit FX state with USD coverage, latest USD/CNH spot, weighted all-in
   conversion cost basis, and their percentage difference;
   tracked-universe breadth, VIX, and RSP-versus-SPY evidence;
@@ -121,7 +125,8 @@ The daily report contains:
   `ready`/`blocked`/`waiting_for_condition` action readiness, and mandatory
   human approval for every decision candidate;
 - a Decision Context joining market risk, portfolio impact, allocations,
-  targets, daily budget, investment cash, rule permission, and readiness;
+  targets, daily budget, investment cash, rule permission, readiness, and
+  quality-gated valuation/earnings/news evidence;
 - persisted daily decision-state history for comparing candidate and execution
   transitions, reasons, evidence, factor impacts, and proposed amounts over time;
   and

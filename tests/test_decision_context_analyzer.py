@@ -5,6 +5,7 @@ from app.config import DailyBudgetPolicy, ReportProfile, TargetAllocationPolicy
 from app.models.analysis import (
     ActionReadiness,
     DecisionHistoryRecord,
+    DecisionEvidenceState,
     ExecutionReadiness,
     PortfolioAllocation,
     PortfolioFactorState,
@@ -61,6 +62,9 @@ def test_decision_context_combines_personal_constraints_and_market_impact():
                 ("human_approval_required",), permission_status="allowed",
             ),
         ),
+        decision_evidence=DecisionEvidenceState(
+            "available", "available", "available", "available", ()
+        ),
     )
 
     assert context.status == "available"
@@ -73,6 +77,8 @@ def test_decision_context_combines_personal_constraints_and_market_impact():
     assert context.daily_budget_amount == 200
     assert context.available_investment_cash == 500
     assert "PRICE:QQQ" in context.evidence_refs
+    assert context.decision_evidence is not None
+    assert context.decision_evidence.status == "available"
 
 
 def test_decision_context_identifies_execution_transition():
@@ -108,3 +114,56 @@ def test_decision_context_identifies_execution_transition():
 
     assert context.previous_report_date == date(2026, 7, 25)
     assert context.transition == "execution_readiness_changed"
+
+
+def test_decision_context_journal_detects_p2_evidence_change():
+    previous = DecisionHistoryRecord(
+        date(2026, 7, 25),
+        "waiting_for_condition",
+        None,
+        None,
+        None,
+        {},
+        context={
+            "decision_evidence": {
+                "status": "blocked",
+                "valuation_status": "blocked",
+                "earnings_revision_status": "blocked",
+                "news_entity_status": "disabled",
+                "assets": [],
+                "uncovered_symbols": [],
+                "review_flags": [],
+                "reasons": [],
+                "evidence_refs": [],
+            }
+        },
+    )
+    decision = StrategyDecisionState(
+        (),
+        ActionReadiness(
+            "waiting_for_condition", None, None, None,
+            ("no_strategy_condition_triggered",),
+        ),
+    )
+    context = build_decision_context(
+        date(2026, 7, 26),
+        RiskAssessment(0, "low", []),
+        PortfolioImpactAnalysis(
+            PortfolioFactorState("available", 1.0, ()),
+            PortfolioImpactAssessment("available", (), level="low"),
+        ),
+        PortfolioSummary(
+            "CNY", 1000, [], 100, 0, None, None, investment_cash=1000
+        ),
+        ReportProfile(
+            target_allocation=TargetAllocationPolicy(weights={"QQQ": 1.0}),
+            daily_budget=DailyBudgetPolicy(100, "CNY"),
+        ),
+        decision,
+        previous,
+        DecisionEvidenceState(
+            "degraded", "available", "blocked", "disabled", ()
+        ),
+    )
+
+    assert context.transition == "decision_evidence_changed"

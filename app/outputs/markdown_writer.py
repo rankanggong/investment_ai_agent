@@ -552,28 +552,32 @@ def _render_fundamental_state(
         "",
         "Valuation observations:",
         "",
-        "| Symbol | As Of | Metric | Value | Currency | Period | Source |",
-        "|---|---|---|---:|---|---|---|",
+        "| Evidence Ref | Symbol | As Of | Metric | Value | Currency | Period | Source |",
+        "|---|---|---|---|---:|---|---|---|",
     ]
     if state.valuations:
         lines.extend(
-            f"| {item.symbol} | {item.as_of_date.isoformat()} | {item.metric} | "
+            f"| VALUATION:{item.symbol}:{item.metric}:"
+            f"{item.as_of_date.isoformat()}:{item.source} | {item.symbol} | "
+            f"{item.as_of_date.isoformat()} | {item.metric} | "
             f"{item.value:.4f} | {item.currency or 'N/A'} | "
             f"{item.period or 'N/A'} | {item.source} |"
             for item in state.valuations
         )
     else:
-        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A |")
+        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A | N/A |")
     lines.extend([
         "",
         "Earnings estimate revisions:",
         "",
-        "| Symbol | Fiscal Period | Metric | Previous | Current | Change | Direction | Material | Source |",
-        "|---|---|---|---:|---:|---:|---|---|---|",
+        "| Evidence Ref | Symbol | Fiscal Period | Metric | Previous | Current | Change | Direction | Material | Source |",
+        "|---|---|---|---|---:|---:|---:|---|---|---|",
     ])
     if state.revisions:
         lines.extend(
-            f"| {item.symbol} | {item.fiscal_period} | {item.metric} | "
+            f"| EARNINGS_REVISION:{item.symbol}:{item.fiscal_period}:"
+            f"{item.metric}:{item.current_date.isoformat()}:{item.source} | "
+            f"{item.symbol} | {item.fiscal_period} | {item.metric} | "
             f"{item.previous_value:.4f} ({item.previous_date.isoformat()}) | "
             f"{item.current_value:.4f} ({item.current_date.isoformat()}) | "
             f"{_format_percent(item.change_pct)} | {item.direction} | "
@@ -582,7 +586,7 @@ def _render_fundamental_state(
             for item in state.revisions
         )
     else:
-        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |")
+        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |")
     lines.extend(f"- Reason: {reason}" for reason in state.reasons)
     return lines
 
@@ -606,7 +610,8 @@ def _render_news_pipeline(
     ])
     for event in events or []:
         lines.append(
-            f"- {event.related_symbol} / {event.event_type} / "
+            f"- NEWS_EVENT:{event.related_symbol}:{event.event_type}:"
+            f"{event.event_date} — {event.related_symbol} / {event.event_type} / "
             f"{event.event_date}: {event.headline} "
             f"({event.article_count} article(s))."
         )
@@ -701,6 +706,50 @@ def _render_decision_context(context: DecisionContext | None) -> list[str]:
     ]
     lines.extend(f"- Context reason: {reason}" for reason in context.reasons)
     lines.append("- Evidence refs: " + ", ".join(context.evidence_refs))
+    evidence = context.decision_evidence
+    if evidence is None:
+        lines.extend(["", "Decision evidence: blocked", "- No P2 evidence state."])
+        return lines
+    lines.extend([
+        "",
+        f"Decision evidence: {evidence.status}",
+        f"- Valuation: {evidence.valuation_status}",
+        f"- Earnings revision: {evidence.earnings_revision_status}",
+        f"- News entity pipeline: {evidence.news_entity_status}",
+        "- Uncovered relevant symbols: "
+        + (", ".join(evidence.uncovered_symbols) or "none"),
+    ])
+    lines.extend(f"- Evidence reason: {reason}" for reason in evidence.reasons)
+    lines.extend(f"- Review flag: {flag}" for flag in evidence.review_flags)
+    lines.extend([
+        "",
+        "| Asset | Relevance | Weight | Valuation Observations | Earnings Revisions | News Events | Evidence |",
+        "|---|---|---:|---|---|---|---|",
+    ])
+    for item in evidence.assets:
+        valuations = "; ".join(
+            f"{row.metric}={row.value:.4f} ({row.as_of_date}, {row.source})"
+            for row in item.valuations
+        ) or "none"
+        revisions = "; ".join(
+            f"{row.fiscal_period}/{row.metric}: {row.direction} "
+            f"({_format_percent(row.change_pct)}, material="
+            f"{'yes' if row.material else 'no' if row.material is False else 'N/A'})"
+            for row in item.revisions
+        ) or "none"
+        news = "; ".join(
+            f"{row.event_type} ({row.event_date}, review required)"
+            for row in item.news_events
+        ) or "none"
+        lines.append(
+            f"| {item.symbol} | {_escape_cell(', '.join(item.relevance))} | "
+            f"{_format_percent(item.portfolio_weight)} | "
+            f"{_escape_cell(valuations)} | {_escape_cell(revisions)} | "
+            f"{_escape_cell(news)} | "
+            f"{_escape_cell(', '.join(item.evidence_refs) or 'N/A')} |"
+        )
+    if not evidence.assets:
+        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A |")
     return lines
 
 

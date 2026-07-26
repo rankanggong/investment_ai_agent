@@ -6,6 +6,7 @@ from app.analyzers.company_price_bounds_analyzer import analyze_company_price_bo
 from app.analyzers.asset_event_analyzer import analyze_asset_events
 from app.analyzers.data_coverage_analyzer import analyze_data_coverage
 from app.analyzers.decision_context_analyzer import build_decision_context
+from app.analyzers.decision_evidence_analyzer import analyze_decision_evidence
 from app.analyzers.daily_report_state_analyzer import (
     analyze_fx_state,
     analyze_market_breadth,
@@ -209,6 +210,13 @@ def generate_daily_report(
             portfolio_impact.factors.status,
         ),
     )
+    decision_evidence = analyze_decision_evidence(
+        portfolio_summary,
+        strategy_decision,
+        fundamental_state,
+        news_quality,
+        asset_events,
+    )
     report_repo = ReportRepository(db_path)
     previous_decision = report_repo.get_previous_decision_state(effective_date)
     decision_context = build_decision_context(
@@ -219,6 +227,7 @@ def generate_daily_report(
         report_profile,
         strategy_decision,
         previous_decision,
+        decision_evidence,
     )
     strategy_rules = [*strategy_decision.rules, *monitoring_rules]
     report_state = build_report_state(

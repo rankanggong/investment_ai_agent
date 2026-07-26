@@ -487,6 +487,7 @@ class DecisionContext:
     previous_report_date: date | None = None
     reasons: tuple[str, ...] = ()
     evidence_refs: tuple[str, ...] = ()
+    decision_evidence: "DecisionEvidenceState | None" = None
 
 
 @dataclass(frozen=True)
@@ -592,6 +593,66 @@ class FundamentalEvidenceState:
     revisions: tuple[EarningsRevision, ...]
     fundamental_flags: dict[str, bool]
     reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DecisionValuationEvidence:
+    metric: str
+    value: float
+    source: str
+    as_of_date: str
+    currency: str | None
+    period: str | None
+    evidence_ref: str
+
+
+@dataclass(frozen=True)
+class DecisionRevisionEvidence:
+    fiscal_period: str
+    metric: str
+    direction: str
+    change_pct: float | None
+    material: bool | None
+    source: str
+    as_of_date: str
+    evidence_ref: str
+
+
+@dataclass(frozen=True)
+class DecisionNewsEvidence:
+    event_type: str
+    event_date: str
+    headline: str
+    confidence: float
+    article_count: int
+    review_type: str
+    source_urls: tuple[str, ...]
+    evidence_ref: str
+
+
+@dataclass(frozen=True)
+class DecisionAssetEvidence:
+    symbol: str
+    relevance: tuple[str, ...]
+    portfolio_weight: float | None
+    valuations: tuple[DecisionValuationEvidence, ...]
+    revisions: tuple[DecisionRevisionEvidence, ...]
+    news_events: tuple[DecisionNewsEvidence, ...]
+    review_flags: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DecisionEvidenceState:
+    status: str
+    valuation_status: str
+    earnings_revision_status: str
+    news_entity_status: str
+    assets: tuple[DecisionAssetEvidence, ...]
+    uncovered_symbols: tuple[str, ...] = ()
+    review_flags: tuple[str, ...] = ()
+    reasons: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -715,6 +776,10 @@ class ReportState:
     valuation_status: str = "blocked"
     earnings_revision_status: str = "blocked"
     earnings_revision_directions: dict[str, str] = field(default_factory=dict)
+    decision_evidence_status: str = "blocked"
+    decision_evidence_symbols: tuple[str, ...] = ()
+    decision_evidence_review_flags: tuple[str, ...] = ()
+    news_entity_pipeline_status: str = "disabled"
     strategy_rule_states: dict[str, str] = field(default_factory=dict)
     gpt_task_ids: tuple[str, ...] = ()
 
