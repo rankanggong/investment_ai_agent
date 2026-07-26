@@ -250,6 +250,49 @@ class RiskAssessment:
     scope: str = "market"
     clusters: list["RiskClusterAssessment"] = field(default_factory=list)
     single_asset_alerts: list["RiskAssetAlert"] = field(default_factory=list)
+    components: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PortfolioFactorExposure:
+    factor_id: str
+    status: str
+    weight: float | None
+    symbols: tuple[str, ...]
+    basis: str
+    reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PortfolioFactorState:
+    status: str
+    mapped_weight: float | None
+    exposures: tuple[PortfolioFactorExposure, ...]
+    reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PortfolioImpactItem:
+    factor_id: str
+    exposure_weight: float
+    market_risk_points: int
+    impact_score: int
+    level: str
+    drivers: tuple[str, ...]
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PortfolioImpactAssessment:
+    status: str
+    items: tuple[PortfolioImpactItem, ...]
+    reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PortfolioImpactAnalysis:
+    factors: PortfolioFactorState
+    impact: PortfolioImpactAssessment
 
 
 @dataclass(frozen=True)
@@ -557,6 +600,10 @@ class ReportState:
     execution_readiness_status: str = "blocked"
     proposed_action_amount: float | None = None
     proposed_action_currency: str | None = None
+    portfolio_factor_exposures: dict[str, float | None] = field(
+        default_factory=dict
+    )
+    portfolio_impact_scores: dict[str, int] = field(default_factory=dict)
     strategy_rule_states: dict[str, str] = field(default_factory=dict)
     gpt_task_ids: tuple[str, ...] = ()
 

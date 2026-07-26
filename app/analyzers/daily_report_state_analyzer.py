@@ -23,6 +23,7 @@ from app.models.analysis import (
     PortfolioAllocation,
     PortfolioAllocationView,
     PortfolioFreshness,
+    PortfolioImpactAnalysis,
     PortfolioDecisionState,
     PortfolioRiskAssessment,
     PortfolioSummary,
@@ -481,6 +482,11 @@ def assess_market_risk(
         scope="market",
         clusters=cluster_results,
         single_asset_alerts=single_asset_alerts,
+        components={
+            "unusual_moves": unusual_move_points,
+            "breadth": breadth_points,
+            "volatility": vix_points,
+        },
     )
 
 
@@ -933,6 +939,7 @@ def build_report_state(
     portfolio: PortfolioSummary,
     fx_state: FxState | None = None,
     strategy_decision: StrategyDecisionState | None = None,
+    portfolio_impact: PortfolioImpactAnalysis | None = None,
 ) -> ReportState:
     liquid_view = portfolio.liquid_asset_allocation
     return ReportState(
@@ -1028,6 +1035,24 @@ def build_report_state(
             strategy_decision.execution_readiness.currency
             if strategy_decision is not None
             else None
+        ),
+        portfolio_factor_exposures=(
+            {
+                item.factor_id: (
+                    round(item.weight, 6) if item.weight is not None else None
+                )
+                for item in portfolio_impact.factors.exposures
+            }
+            if portfolio_impact is not None
+            else {}
+        ),
+        portfolio_impact_scores=(
+            {
+                item.factor_id: item.impact_score
+                for item in portfolio_impact.impact.items
+            }
+            if portfolio_impact is not None
+            else {}
         ),
         strategy_rule_states=(
             {
@@ -1178,6 +1203,13 @@ def extract_report_state(content: str | None) -> ReportState | None:
             ),
             proposed_action_amount=data.get("proposed_action_amount"),
             proposed_action_currency=data.get("proposed_action_currency"),
+            portfolio_factor_exposures=dict(
+                data.get("portfolio_factor_exposures", {})
+            ),
+            portfolio_impact_scores={
+                key: int(value)
+                for key, value in data.get("portfolio_impact_scores", {}).items()
+            },
             strategy_rule_states=dict(data.get("strategy_rule_states", {})),
             gpt_task_ids=tuple(data.get("gpt_task_ids", [])),
         )
@@ -1238,6 +1270,8 @@ def compare_report_states(
         "execution_readiness_status": "Execution readiness",
         "proposed_action_amount": "Proposed action amount",
         "proposed_action_currency": "Proposed action currency",
+        "portfolio_factor_exposures": "Portfolio factor exposures",
+        "portfolio_impact_scores": "Portfolio impact scores",
         "strategy_rule_states": "Strategy rule states",
     }
     changes = [
@@ -1325,7 +1359,8 @@ def build_gpt_tasks(
         if use_states.data_quality is not None:
             capabilities = use_states.data_quality.capabilities
             capability = {
-                "portfolio": capabilities.investment_action,
+                "portfolio_action": capabilities.investment_action,
+                "portfolio_analysis": capabilities.portfolio_analysis,
                 "news": capabilities.news_analysis,
                 "market": capabilities.market_analysis,
                 "fx": capabilities.fx_analysis,
@@ -1338,7 +1373,7 @@ def build_gpt_tasks(
             )
             blocked_reasons.extend(capability.reasons)
         elif (
-            required_state == "portfolio"
+            required_state == "portfolio_action"
             and use_states.portfolio.actionability != "available"
         ):
             status = "blocked"
@@ -1696,14 +1731,26 @@ def _gpt_question_refs(
     market_refs: tuple[str, ...],
     evidence_by_symbol: dict[str, str],
 ) -> tuple[tuple[str, ...], str]:
+    if any(term in question for term in ["目标仓位", "配置缺口", "买多少"]):
+        return (
+            (
+                "STATE:MARKET",
+                *market_refs,
+                "STATE:PORTFOLIO",
+                "PORTFOLIO:ALLOCATION",
+                "STATE:ACTION_READINESS",
+                "STATE:EXECUTION_READINESS",
+            ),
+            "portfolio_action",
+        )
     if any(
         term in question
         for term in [
-            "目标仓位",
-            "配置缺口",
             "组合风险",
             "组合决策",
             "组合敞口",
+            "因子敞口",
+            "组合影响",
             "组合数据质量",
         ]
     ):
@@ -1717,10 +1764,11 @@ def _gpt_question_refs(
                         "DQ:PORTFOLIO:SNAPSHOT",
                         "DQ:PORTFOLIO:CASH_ROLES",
                         "PORTFOLIO:ALLOCATION",
+                        "PORTFOLIO:FACTOR_IMPACT",
                     ]
                 )
             ),
-            "portfolio",
+            "portfolio_analysis",
         )
     if any(term in question for term in ["换汇", "USD/CNH", "美元指数"]):
         fx_refs = [

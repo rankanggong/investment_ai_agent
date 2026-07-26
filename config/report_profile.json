@@ -13,6 +13,44 @@
   },
   "usd_daily_spend": null,
   "action_sizing": [],
+  "portfolio_factors": [
+    {
+      "id": "us_equity",
+      "symbols": ["SPY", "VOO", "QQQ", "RSP"],
+      "risk_components": ["breadth", "volatility"],
+      "risk_clusters": ["broad_equity_growth"]
+    },
+    {
+      "id": "growth_equity",
+      "symbols": ["QQQ"],
+      "risk_components": ["volatility"],
+      "risk_clusters": ["broad_equity_growth"]
+    },
+    {
+      "id": "gold",
+      "symbols": ["GLD"],
+      "risk_components": [],
+      "risk_clusters": ["gold"]
+    },
+    {
+      "id": "duration",
+      "symbols": ["TLT"],
+      "risk_components": ["volatility"],
+      "risk_clusters": ["rates_duration"]
+    },
+    {
+      "id": "credit",
+      "symbols": ["HYG", "LQD"],
+      "risk_components": [],
+      "risk_clusters": ["credit"]
+    },
+    {
+      "id": "crypto",
+      "symbols": ["BTC-USD"],
+      "risk_components": ["volatility"],
+      "risk_clusters": ["crypto"]
+    }
+  ],
   "strategy_rules": [
     {
       "id": "qqq_pause_on_negative_revision",
@@ -81,7 +119,7 @@
   ],
   "gpt_questions": [
     "中期趋势与短期反弹是否一致，哪些资产出现背离？",
-    "市场风险、组合敞口风险与组合数据质量风险分别由哪些证据驱动，什么变化会使评分下降？",
+    "市场风险如何通过组合因子敞口映射为组合影响，哪些证据与数据质量变化会改变结论？",
     "USD/CNH、美元指数与利率数据是否改变换汇时点的观察条件？",
     "在目标仓位与每日额度配置完整后，最大的配置缺口是什么？"
   ]

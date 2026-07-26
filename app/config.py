@@ -38,6 +38,14 @@ class ActionSizingPolicy:
 
 
 @dataclass(frozen=True)
+class PortfolioFactorDefinition:
+    factor_id: str
+    symbols: tuple[str, ...]
+    risk_components: tuple[str, ...] = ()
+    risk_clusters: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ReportProfile:
     base_currency: str = "CNY"
     target_allocations: dict[str, float] = field(default_factory=dict)
@@ -48,6 +56,7 @@ class ReportProfile:
     target_allocation: TargetAllocationPolicy | None = None
     daily_budget: DailyBudgetPolicy | None = None
     action_sizing: tuple[ActionSizingPolicy, ...] = ()
+    portfolio_factors: tuple[PortfolioFactorDefinition, ...] = ()
 
     def __post_init__(self) -> None:
         target = self.target_allocation or TargetAllocationPolicy(
@@ -84,6 +93,9 @@ def load_report_profile(path: Path | None) -> ReportProfile:
         target_allocation=target_policy,
         daily_budget=budget_policy,
         action_sizing=_load_action_sizing(data.get("action_sizing", [])),
+        portfolio_factors=_load_portfolio_factors(
+            data.get("portfolio_factors", [])
+        ),
     )
 
 
@@ -153,6 +165,53 @@ def _load_action_sizing(raw_items: Any) -> tuple[ActionSizingPolicy, ...]:
             raise ValueError("action sizing budget_fraction must be above 0 and at most 1")
         policies.append(ActionSizingPolicy(action, method, fraction))
     return tuple(policies)
+
+
+def _load_portfolio_factors(
+    raw_items: Any,
+) -> tuple[PortfolioFactorDefinition, ...]:
+    if not isinstance(raw_items, list):
+        raise ValueError("portfolio_factors must be a list")
+    allowed_components = {"breadth", "volatility"}
+    allowed_clusters = {
+        "broad_equity_growth", "sector_style", "mega_cap_companies",
+        "rates_duration", "credit", "usd_cnh", "gold", "crypto",
+    }
+    definitions: list[PortfolioFactorDefinition] = []
+    seen: set[str] = set()
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            raise ValueError("each portfolio factor must be an object")
+        factor_id = str(raw.get("id", "")).strip()
+        if any(
+            not isinstance(raw.get(name, []), list)
+            for name in ("symbols", "risk_components", "risk_clusters")
+        ):
+            raise ValueError("portfolio factor mappings must be lists")
+        symbols = tuple(
+            dict.fromkeys(str(item).upper() for item in raw.get("symbols", []))
+        )
+        components = tuple(
+            dict.fromkeys(str(item) for item in raw.get("risk_components", []))
+        )
+        clusters = tuple(
+            dict.fromkeys(str(item) for item in raw.get("risk_clusters", []))
+        )
+        if not factor_id or not symbols:
+            raise ValueError("portfolio factor id and symbols are required")
+        if factor_id in seen:
+            raise ValueError(f"duplicate portfolio factor id: {factor_id}")
+        if any(item not in allowed_components for item in components):
+            raise ValueError(f"portfolio factor {factor_id} has an invalid risk component")
+        if any(item not in allowed_clusters for item in clusters):
+            raise ValueError(f"portfolio factor {factor_id} has an invalid risk cluster")
+        seen.add(factor_id)
+        definitions.append(
+            PortfolioFactorDefinition(
+                factor_id, symbols, components, clusters
+            )
+        )
+    return tuple(definitions)
 
 
 def _load_strategy_rules(raw_rules: Any) -> tuple[StrategyRuleDefinition, ...]:

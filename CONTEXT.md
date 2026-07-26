@@ -139,6 +139,21 @@ A score derived only from supplied investment-state facts such as allocation
 gaps, invested-sleeve concentration, and investment-cash coverage.
 _Avoid_: Snapshot freshness, unknown cash roles
 
+**Portfolio Factor Exposure**:
+The share of supplied invested Holding Cost associated with each configured,
+possibly overlapping factor tag. It is not regression beta or market-value exposure.
+_Avoid_: Factor beta, inferred style exposure
+
+**Portfolio Impact**:
+A screening score that combines Portfolio Factor Exposure with mapped Market
+Risk components and clusters. It is not an expected gain, loss, or forecast.
+_Avoid_: Price target, loss estimate
+
+**Historical State Comparison**:
+A comparison between daily report-state snapshots for decision-relevant fields,
+including factor exposure, portfolio impact, readiness, and candidate changes.
+_Avoid_: Transaction history, performance attribution
+
 **Portfolio Data-Quality Risk**:
 A diagnostic score describing uncertainty caused by stale or unavailable
 snapshots and unknown cash roles.

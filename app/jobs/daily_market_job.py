@@ -22,6 +22,7 @@ from app.analyzers.daily_report_state_analyzer import (
 from app.analyzers.daily_signal_summary_analyzer import analyze_daily_signal_summary
 from app.analyzers.macro_context_analyzer import analyze_macro_context
 from app.analyzers.price_move_analyzer import analyze_price_moves
+from app.analyzers.portfolio_impact_analyzer import analyze_portfolio_impact
 from app.analyzers.report_signal_analyzer import analyze_report_signals
 from app.analyzers.sector_rotation_analyzer import analyze_sector_rotation
 from app.analyzers.strategy_rule_engine import evaluate_strategy_decision
@@ -141,6 +142,12 @@ def generate_daily_report(
         report_profile,
         fx_state,
     )
+    portfolio_impact = analyze_portfolio_impact(
+        portfolio_summary,
+        report_profile.portfolio_factors,
+        market_risk,
+        use_states.market.actionability,
+    )
     monitoring_rules = evaluate_strategy_rules(
         signals,
         sector_rotation,
@@ -167,6 +174,7 @@ def generate_daily_report(
         portfolio_summary,
         fx_state,
         strategy_decision,
+        portfolio_impact,
     )
     report_repo = ReportRepository(db_path)
     previous_state = extract_report_state(
@@ -212,6 +220,7 @@ def generate_daily_report(
         key_evidence=key_evidence,
         strategy_rules=strategy_rules,
         strategy_decision=strategy_decision,
+        portfolio_impact=portfolio_impact,
         changes=changes,
         gpt_tasks=gpt_tasks,
         report_state=report_state,

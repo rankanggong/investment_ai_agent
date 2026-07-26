@@ -132,6 +132,14 @@ def test_load_report_profile_reads_structured_target_budget_and_action_sizing(
                         "budget_fraction": 0.5,
                     }
                 ],
+                "portfolio_factors": [
+                    {
+                        "id": "us_equity",
+                        "symbols": ["qqq", "voo"],
+                        "risk_components": ["breadth", "volatility"],
+                        "risk_clusters": ["broad_equity_growth"],
+                    }
+                ],
             }
         ),
         encoding="utf-8",
@@ -144,3 +152,7 @@ def test_load_report_profile_reads_structured_target_budget_and_action_sizing(
     assert profile.daily_investment_budget == 1000
     assert profile.daily_budget.maximum_action_amount == 600
     assert profile.action_sizing[0].budget_fraction == 0.5
+    assert profile.portfolio_factors[0].symbols == ("QQQ", "VOO")
+    assert profile.portfolio_factors[0].risk_components == (
+        "breadth", "volatility"
+    )

@@ -90,6 +90,8 @@ The daily report contains:
   z-score, 20D ATR multiple, and 252D absolute-move percentile;
 - separate market risk, portfolio exposure risk, and portfolio data-quality
   risk scores, with single-asset alerts distinct from correlated clusters;
+- configured cost-basis factor-tag exposure and an explicit mapping from market
+  risk components/clusters to portfolio impact screening scores;
 - explicit FX state with USD coverage, latest USD/CNH spot, weighted all-in
   conversion cost basis, and their percentage difference;
   tracked-universe breadth, VIX, and RSP-versus-SPY evidence;
@@ -99,7 +101,7 @@ The daily report contains:
   `ready`/`blocked`/`waiting_for_condition` action readiness, and mandatory
   human approval for every decision candidate;
 - persisted daily decision-state history for comparing readiness, candidate
-  actions, and rule states over time;
+  actions, rule states, factor exposures, and portfolio impact over time;
   and
 - an appendix with full price evidence, account detail, technical bounds, macro
   evidence, and raw price sources.

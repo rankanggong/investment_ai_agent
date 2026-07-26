@@ -18,6 +18,7 @@ from app.models.analysis import (
     NewsState,
     PortfolioAllocationView,
     PortfolioDecisionState,
+    PortfolioImpactAnalysis,
     PortfolioRiskAssessment,
     PortfolioSummary,
     PriceSignal,
@@ -64,6 +65,7 @@ def render_daily_report(
     gpt_tasks: list[GptAnalysisTask] | None = None,
     report_state: ReportState | None = None,
     price_sources: dict[str, str] | None = None,
+    portfolio_impact: PortfolioImpactAnalysis | None = None,
 ) -> str:
     effective_risk = risk_assessment or RiskAssessment(
         score=0,
@@ -141,6 +143,9 @@ def render_daily_report(
         ]
     )
     lines.extend(_render_portfolio_summary(portfolio_summary))
+    lines.extend(["", "### Portfolio Factor Exposure and Market Impact", ""])
+    lines.extend(["Evidence Ref: PORTFOLIO:FACTOR_IMPACT", ""])
+    lines.extend(_render_portfolio_impact(portfolio_impact))
     lines.extend(
         [
             "",
@@ -515,6 +520,59 @@ def _render_key_evidence(evidence: list[MarketEvidence]) -> list[str]:
             f"{_format_percent(row.absolute_move_percentile_252d)} | "
             f"{row.short_term_state} | {_escape_cell(row.detection_reason)} |"
         )
+    return lines
+
+
+def _render_portfolio_impact(
+    analysis: PortfolioImpactAnalysis | None,
+) -> list[str]:
+    if analysis is None:
+        return ["Status: blocked", "- Reason: portfolio impact was not evaluated."]
+    lines = [
+        f"Factor exposure status: {analysis.factors.status}",
+        f"- Mapped invested weight: {_format_percent(analysis.factors.mapped_weight)}",
+    ]
+    lines.extend(f"- Factor reason: {reason}" for reason in analysis.factors.reasons)
+    lines.extend([
+        "",
+        "| Factor | Exposure | Symbols | Basis |",
+        "|---|---:|---|---|",
+    ])
+    if analysis.factors.exposures:
+        lines.extend(
+            f"| {item.factor_id} | {_format_percent(item.weight)} | "
+            f"{_escape_cell(', '.join(item.symbols) or 'None')} | "
+            f"{item.basis} |"
+            for item in analysis.factors.exposures
+        )
+    else:
+        lines.append("| None | N/A | N/A | N/A |")
+    lines.extend([
+        "",
+        f"Portfolio impact status: {analysis.impact.status}",
+    ])
+    lines.extend(f"- Impact reason: {reason}" for reason in analysis.impact.reasons)
+    lines.extend([
+        "",
+        "| Factor | Exposure | Market Risk Points | Impact Score | Level | Drivers | Evidence |",
+        "|---|---:|---:|---:|---|---|---|",
+    ])
+    if analysis.impact.items:
+        lines.extend(
+            f"| {item.factor_id} | {_format_percent(item.exposure_weight)} | "
+            f"{item.market_risk_points} | {item.impact_score} | {item.level} | "
+            f"{_escape_cell('; '.join(item.drivers) or 'none')} | "
+            f"{_escape_cell(', '.join(item.evidence_refs) or 'N/A')} |"
+            for item in analysis.impact.items
+        )
+    else:
+        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A |")
+    lines.extend([
+        "",
+        "Factor exposure uses configured tags over supplied holding cost; it is "
+        "not regression beta or market-value exposure. Impact Score is a "
+        "screening score, not an expected gain or loss.",
+    ])
     return lines
 
 

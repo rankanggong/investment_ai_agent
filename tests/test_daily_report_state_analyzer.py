@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
@@ -315,6 +316,18 @@ def test_market_and_portfolio_state_round_trip_and_compare():
     assert state.liquid_asset_allocation_status == "available"
     assert set(state.liquid_asset_allocation) == {"Cash", "QQQ"}
     assert state.fx_status == "degraded"
+    changed = replace(
+        state,
+        portfolio_factor_exposures={"us_equity": 1.0},
+        portfolio_impact_scores={"us_equity": 8},
+    )
+    changed_restored = extract_report_state(serialize_report_state(changed))
+    assert changed_restored is not None
+    assert changed_restored.portfolio_factor_exposures == {"us_equity": 1.0}
+    assert changed_restored.portfolio_impact_scores == {"us_equity": 8}
+    changes = compare_report_states(state, changed)
+    assert any("Portfolio factor exposures" in item for item in changes)
+    assert any("Portfolio impact scores" in item for item in changes)
     assert compare_report_states(restored, state) == ["No state changes detected."]
 
 
@@ -472,6 +485,45 @@ def test_gpt_portfolio_task_is_blocked_and_uses_portfolio_refs():
     assert "STATE:PORTFOLIO" in task.evidence_refs
     assert "PORTFOLIO:ALLOCATION" in task.evidence_refs
     assert "do not infer a decision" in task.expected_output
+
+
+def test_gpt_factor_impact_task_uses_portfolio_analysis_not_action_gate():
+    summary = analyze_portfolio_summary(
+        portfolio_state(),
+        ReportProfile(),
+        {"USD/CNH": signal("USD/CNH", latest=7.0)},
+        date(2026, 7, 25),
+    )
+    market = assess_market_risk(
+        {"SPY": signal("SPY")},
+        analyze_market_breadth({"SPY": signal("SPY")}, {}),
+    )
+    states = build_report_use_states(
+        market,
+        MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
+        type(
+            "Rotation",
+            (),
+            {"strong_sectors": [], "weak_sectors": [], "risk_on_score": 0.0},
+        )(),
+        DataCoverage([], [], status="available"),
+        summary,
+        assess_portfolio_decision_risk(summary),
+        None,
+        ReportProfile(),
+    )
+
+    task = build_gpt_tasks(
+        ReportProfile(gpt_questions=["组合因子敞口如何映射为组合影响？"]),
+        ["No state changes detected."],
+        [],
+        select_key_market_evidence({"SPY": signal("SPY")}),
+        states,
+    )[0]
+
+    assert states.portfolio.actionability == "blocked"
+    assert task.status == "ready"
+    assert "PORTFOLIO:FACTOR_IMPACT" in task.evidence_refs
 
 
 def test_portfolio_risk_separates_exposure_from_data_quality():
