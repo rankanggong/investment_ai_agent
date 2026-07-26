@@ -5,6 +5,7 @@ from pathlib import Path
 from app.analyzers.company_price_bounds_analyzer import analyze_company_price_bounds
 from app.analyzers.asset_event_analyzer import analyze_asset_events
 from app.analyzers.data_coverage_analyzer import analyze_data_coverage
+from app.analyzers.decision_context_analyzer import build_decision_context
 from app.analyzers.daily_report_state_analyzer import (
     analyze_fx_state,
     analyze_market_breadth,
@@ -208,6 +209,17 @@ def generate_daily_report(
             portfolio_impact.factors.status,
         ),
     )
+    report_repo = ReportRepository(db_path)
+    previous_decision = report_repo.get_previous_decision_state(effective_date)
+    decision_context = build_decision_context(
+        effective_date,
+        market_risk,
+        portfolio_impact,
+        portfolio_summary,
+        report_profile,
+        strategy_decision,
+        previous_decision,
+    )
     strategy_rules = [*strategy_decision.rules, *monitoring_rules]
     report_state = build_report_state(
         use_states,
@@ -220,8 +232,8 @@ def generate_daily_report(
         strategy_decision,
         portfolio_impact,
         fundamental_state,
+        decision_context,
     )
-    report_repo = ReportRepository(db_path)
     previous_state = extract_report_state(
         report_repo.get_previous_content("daily", effective_date)
         or _previous_report_file_content(report_dir, effective_date)
@@ -269,6 +281,7 @@ def generate_daily_report(
         fundamental_state=fundamental_state,
         news_clusters=news_clusters,
         asset_events=asset_events,
+        decision_context=decision_context,
         changes=changes,
         gpt_tasks=gpt_tasks,
         report_state=report_state,
@@ -281,7 +294,9 @@ def generate_daily_report(
         title=f"Daily Market State - {effective_date.isoformat()}",
         content=content,
     )
-    report_repo.upsert_decision_state(effective_date, strategy_decision)
+    report_repo.upsert_decision_state(
+        effective_date, strategy_decision, decision_context
+    )
     return path
 
 

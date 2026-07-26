@@ -66,6 +66,15 @@ def test_factor_exposure_can_overlap_and_maps_market_risk_to_portfolio():
     impacts = {item.factor_id: item for item in result.impact.items}
     assert impacts["us_equity"].market_risk_points == 18
     assert impacts["us_equity"].impact_score == 11
+    assert result.impact.dominant_factor_id == "us_equity"
+    assert result.impact.dominant_impact_score == 11
+    assert [
+        (item.source_kind, item.source_id, item.risk_points)
+        for item in impacts["us_equity"].contributions
+    ] == [
+        ("risk_component", "volatility", 10),
+        ("risk_cluster", "broad_equity_growth", 8),
+    ]
     assert impacts["gold"].impact_score == 2
     assert impacts["gold"].evidence_refs == ("PRICE:GLD",)
 

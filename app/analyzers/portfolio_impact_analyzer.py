@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.config import PortfolioFactorDefinition
 from app.models.analysis import (
+    MarketFactorContribution,
     PortfolioFactorExposure,
     PortfolioFactorState,
     PortfolioImpactAnalysis,
@@ -106,9 +107,14 @@ def _map_market_risk(
         if exposure.weight is None or exposure.weight <= 0:
             continue
         definition = definition_by_id[exposure.factor_id]
-        component_points = sum(
-            market_risk.components.get(component, 0)
+        component_contributions = tuple(
+            MarketFactorContribution(
+                "risk_component",
+                component,
+                market_risk.components.get(component, 0),
+            )
             for component in definition.risk_components
+            if market_risk.components.get(component, 0) > 0
         )
         clusters = [
             item for item in market_risk.clusters
@@ -119,29 +125,35 @@ def _map_market_risk(
             if item.category in definition.risk_clusters
             and item.symbol in definition.symbols
         ]
-        risk_points = min(
-            100,
-            component_points
-            + sum(item.points for item in clusters)
-            + sum(item.points for item in alerts),
+        cluster_contributions = tuple(
+            MarketFactorContribution(
+                "risk_cluster", item.cluster, item.points, item.evidence_refs
+            )
+            for item in clusters
         )
+        asset_contributions = tuple(
+            MarketFactorContribution(
+                "single_asset_alert",
+                item.symbol,
+                item.points,
+                (item.evidence_ref,),
+            )
+            for item in alerts
+        )
+        contributions = (
+            *component_contributions,
+            *cluster_contributions,
+            *asset_contributions,
+        )
+        risk_points = min(100, sum(item.risk_points for item in contributions))
         impact_score = min(100, round(exposure.weight * risk_points))
         drivers = tuple(
-            [
-                *(
-                    f"component:{name}={market_risk.components.get(name, 0)}"
-                    for name in definition.risk_components
-                ),
-                *(f"cluster:{item.cluster}={item.points}" for item in clusters),
-                *(f"asset:{item.symbol}={item.points}" for item in alerts),
-            ]
+            f"{item.source_kind}:{item.source_id}={item.risk_points}"
+            for item in contributions
         )
         evidence_refs = tuple(
             dict.fromkeys(
-                [
-                    *(ref for item in clusters for ref in item.evidence_refs),
-                    *(item.evidence_ref for item in alerts),
-                ]
+                ref for item in contributions for ref in item.evidence_refs
             )
         )
         items.append(
@@ -153,9 +165,17 @@ def _map_market_risk(
                 _impact_level(impact_score),
                 drivers,
                 evidence_refs,
+                contributions,
             )
         )
-    return PortfolioImpactAssessment("available", tuple(items))
+    dominant = max(items, key=lambda item: item.impact_score, default=None)
+    return PortfolioImpactAssessment(
+        "available",
+        tuple(items),
+        dominant_factor_id=dominant.factor_id if dominant else None,
+        dominant_impact_score=dominant.impact_score if dominant else None,
+        level=dominant.level if dominant else "low",
+    )
 
 
 def _impact_level(score: int) -> str:

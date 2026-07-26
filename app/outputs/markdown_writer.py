@@ -8,6 +8,7 @@ from app.models.analysis import (
     DataCoverage,
     DataCoverageRow,
     DailySignalSummary,
+    DecisionContext,
     FxCostComparison,
     FxState,
     FundamentalEvidenceState,
@@ -72,6 +73,7 @@ def render_daily_report(
     fundamental_state: FundamentalEvidenceState | None = None,
     news_clusters: list[NewsCluster] | None = None,
     asset_events: list[AssetEvent] | None = None,
+    decision_context: DecisionContext | None = None,
 ) -> str:
     effective_risk = risk_assessment or RiskAssessment(
         score=0,
@@ -187,6 +189,8 @@ def render_daily_report(
         ]
     )
     lines.extend(_render_action_readiness(strategy_decision))
+    lines.extend(["", "Decision Context:", ""])
+    lines.extend(_render_decision_context(decision_context))
     lines.extend(["", "Rule Evaluations:", ""])
     lines.extend(_render_triggered_rules(effective_rules))
     lines.extend(["", f"Market risk: {effective_risk.score}/100 ({effective_risk.level})"])
@@ -638,6 +642,10 @@ def _render_portfolio_impact(
     lines.extend([
         "",
         f"Portfolio impact status: {analysis.impact.status}",
+        f"- Dominant factor: {analysis.impact.dominant_factor_id or 'N/A'}",
+        f"- Dominant impact score: "
+        f"{analysis.impact.dominant_impact_score if analysis.impact.dominant_impact_score is not None else 'N/A'} "
+        f"({analysis.impact.level})",
     ])
     lines.extend(f"- Impact reason: {reason}" for reason in analysis.impact.reasons)
     lines.extend([
@@ -661,6 +669,38 @@ def _render_portfolio_impact(
         "not regression beta or market-value exposure. Impact Score is a "
         "screening score, not an expected gain or loss.",
     ])
+    return lines
+
+
+def _render_decision_context(context: DecisionContext | None) -> list[str]:
+    if context is None:
+        return ["- Status: blocked", "- Reason: context was not generated."]
+    lines = [
+        "Evidence Ref: STATE:DECISION_CONTEXT",
+        "",
+        f"- Status: {context.status}",
+        f"- Transition: {context.transition}",
+        f"- Previous journal date: "
+        f"{context.previous_report_date.isoformat() if context.previous_report_date else 'N/A'}",
+        f"- Market risk: {context.market_risk_score}/100 "
+        f"({context.market_risk_level})",
+        f"- Dominant portfolio factor: {context.dominant_factor_id or 'N/A'}",
+        f"- Dominant factor impact: "
+        f"{context.dominant_impact_score if context.dominant_impact_score is not None else 'N/A'}",
+        f"- Target allocation configured: "
+        f"{'yes' if context.target_allocation else 'no'}",
+        f"- Daily budget: "
+        f"{_format_money(context.daily_budget_amount, context.daily_budget_currency or '')}",
+        f"- Available investment cash: "
+        f"{_format_money(context.available_investment_cash, context.daily_budget_currency or '')}",
+        f"- Candidate: {context.candidate_action or 'none'} / "
+        f"{context.candidate_symbol or 'N/A'}",
+        f"- Action → execution: {context.action_readiness_status} → "
+        f"{context.execution_readiness_status}",
+        f"- Permission: {context.permission_status}",
+    ]
+    lines.extend(f"- Context reason: {reason}" for reason in context.reasons)
+    lines.append("- Evidence refs: " + ", ".join(context.evidence_refs))
     return lines
 
 

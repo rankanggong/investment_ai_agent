@@ -1,9 +1,14 @@
 import json
+from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 
 from app.storage.db import connect
-from app.models.analysis import DecisionHistoryRecord, StrategyDecisionState
+from app.models.analysis import (
+    DecisionContext,
+    DecisionHistoryRecord,
+    StrategyDecisionState,
+)
 
 
 class ReportRepository:
@@ -56,8 +61,10 @@ class ReportRepository:
         self,
         report_date: date,
         decision: StrategyDecisionState,
+        context: DecisionContext | None = None,
     ) -> None:
         readiness = decision.action_readiness
+        execution = decision.execution_readiness
         rule_states = {
             result.rule_id: result.status
             for result in decision.rules
@@ -69,9 +76,12 @@ class ReportRepository:
                 INSERT INTO decision_states
                   (
                     report_date, readiness_status, candidate_action, symbol,
-                    rule_id, rule_states_json, reasons_json
+                    rule_id, rule_states_json, reasons_json,
+                    execution_status, permission_status, proposed_amount,
+                    proposed_currency, execution_reasons_json,
+                    evidence_refs_json, context_json
                   )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(report_date) DO UPDATE SET
                   readiness_status = excluded.readiness_status,
                   candidate_action = excluded.candidate_action,
@@ -79,6 +89,13 @@ class ReportRepository:
                   rule_id = excluded.rule_id,
                   rule_states_json = excluded.rule_states_json,
                   reasons_json = excluded.reasons_json,
+                  execution_status = excluded.execution_status,
+                  permission_status = excluded.permission_status,
+                  proposed_amount = excluded.proposed_amount,
+                  proposed_currency = excluded.proposed_currency,
+                  execution_reasons_json = excluded.execution_reasons_json,
+                  evidence_refs_json = excluded.evidence_refs_json,
+                  context_json = excluded.context_json,
                   updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -89,6 +106,21 @@ class ReportRepository:
                     readiness.rule_id,
                     json.dumps(rule_states, sort_keys=True),
                     json.dumps(readiness.reasons, ensure_ascii=False),
+                    execution.status,
+                    execution.permission_status,
+                    execution.proposed_amount,
+                    execution.currency,
+                    json.dumps(execution.reasons, ensure_ascii=False),
+                    json.dumps(
+                        context.evidence_refs if context else readiness.evidence_refs,
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        asdict(context) if context else {},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        default=_json_default,
+                    ),
                 ),
             )
 
@@ -130,4 +162,17 @@ def _decision_record(row) -> DecisionHistoryRecord:
         rule_id=row["rule_id"],
         rule_states=dict(json.loads(row["rule_states_json"])),
         reasons=tuple(json.loads(row["reasons_json"])),
+        execution_status=row["execution_status"],
+        permission_status=row["permission_status"],
+        proposed_amount=row["proposed_amount"],
+        proposed_currency=row["proposed_currency"],
+        execution_reasons=tuple(json.loads(row["execution_reasons_json"])),
+        evidence_refs=tuple(json.loads(row["evidence_refs_json"])),
+        context=dict(json.loads(row["context_json"])),
     )
+
+
+def _json_default(value: object) -> str:
+    if isinstance(value, date):
+        return value.isoformat()
+    raise TypeError(f"unsupported journal value: {type(value).__name__}")

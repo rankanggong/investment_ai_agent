@@ -156,6 +156,8 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     assert "Action Readiness: ready" in content
     assert "Execution Readiness: blocked" in content
     assert "rule_execution_permission_not_configured" in content
+    assert "Decision Context:" in content
+    assert "- Transition: baseline" in content
     assert "### Portfolio Factor Exposure and Market Impact" in content
     assert "| us_equity | 100.00% | VOO |" in content
     assert "Portfolio impact status: blocked" in content
@@ -178,3 +180,10 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     assert len(decisions) == 1
     assert decisions[0].report_date == date(2026, 7, 21)
     assert decisions[0].readiness_status == "ready"
+    assert decisions[0].execution_status == "blocked"
+    assert decisions[0].permission_status == "missing"
+    assert decisions[0].context["candidate_rule_id"] == (
+        "qqq_pause_on_negative_revision"
+    )
+    assert decisions[0].context["transition"] == "baseline"
+    assert decisions[0].context["dominant_factor_id"] is None

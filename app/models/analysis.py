@@ -273,6 +273,14 @@ class PortfolioFactorState:
 
 
 @dataclass(frozen=True)
+class MarketFactorContribution:
+    source_kind: str
+    source_id: str
+    risk_points: int
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class PortfolioImpactItem:
     factor_id: str
     exposure_weight: float
@@ -281,6 +289,7 @@ class PortfolioImpactItem:
     level: str
     drivers: tuple[str, ...]
     evidence_refs: tuple[str, ...] = ()
+    contributions: tuple[MarketFactorContribution, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -288,6 +297,9 @@ class PortfolioImpactAssessment:
     status: str
     items: tuple[PortfolioImpactItem, ...]
     reasons: tuple[str, ...] = ()
+    dominant_factor_id: str | None = None
+    dominant_impact_score: int | None = None
+    level: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -448,6 +460,36 @@ class StrategyDecisionState:
 
 
 @dataclass(frozen=True)
+class DecisionContext:
+    report_date: date
+    status: str
+    market_risk_score: int
+    market_risk_level: str
+    portfolio_impact_status: str
+    dominant_factor_id: str | None
+    dominant_impact_score: int | None
+    factor_impact_scores: dict[str, int]
+    current_allocation: dict[str, float | None]
+    target_allocation: dict[str, float]
+    allocation_gaps: dict[str, float]
+    daily_budget_amount: float | None
+    daily_budget_currency: str | None
+    available_investment_cash: float | None
+    candidate_action: str | None
+    candidate_symbol: str | None
+    candidate_rule_id: str | None
+    action_readiness_status: str
+    execution_readiness_status: str
+    permission_status: str
+    proposed_amount: float | None
+    proposed_currency: str | None
+    transition: str
+    previous_report_date: date | None = None
+    reasons: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class DecisionHistoryRecord:
     report_date: date
     readiness_status: str
@@ -456,6 +498,13 @@ class DecisionHistoryRecord:
     rule_id: str | None
     rule_states: dict[str, str]
     reasons: tuple[str, ...] = ()
+    execution_status: str = "blocked"
+    permission_status: str = "denied"
+    proposed_amount: float | None = None
+    proposed_currency: str | None = None
+    execution_reasons: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
+    context: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -654,6 +703,11 @@ class ReportState:
     rule_execution_permission_status: str = "denied"
     proposed_action_amount: float | None = None
     proposed_action_currency: str | None = None
+    decision_context_status: str = "blocked"
+    decision_transition: str = "baseline"
+    dominant_portfolio_factor: str | None = None
+    dominant_portfolio_impact_score: int | None = None
+    decision_context_reasons: tuple[str, ...] = ()
     portfolio_factor_exposures: dict[str, float | None] = field(
         default_factory=dict
     )

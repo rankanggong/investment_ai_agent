@@ -48,6 +48,13 @@ CREATE TABLE IF NOT EXISTS decision_states (
   rule_id TEXT,
   rule_states_json TEXT NOT NULL DEFAULT '{}',
   reasons_json TEXT NOT NULL DEFAULT '[]',
+  execution_status TEXT NOT NULL DEFAULT 'blocked',
+  permission_status TEXT NOT NULL DEFAULT 'denied',
+  proposed_amount REAL,
+  proposed_currency TEXT,
+  execution_reasons_json TEXT NOT NULL DEFAULT '[]',
+  evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+  context_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );

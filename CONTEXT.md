@@ -175,7 +175,10 @@ _Avoid_: Factor beta, inferred style exposure
 
 **Portfolio Impact**:
 A screening score that combines Portfolio Factor Exposure with mapped Market
-Risk components and clusters. It is not an expected gain, loss, or forecast.
+Risk components, clusters, and single-asset alerts. Each contribution retains
+its source, points, and evidence references. The dominant factor is the largest
+single factor score; overlapping tags are not summed into an expected portfolio
+loss. It is not an expected gain, loss, or forecast.
 _Avoid_: Price target, loss estimate
 
 **Historical State Comparison**:
@@ -200,8 +203,9 @@ candidate action. Each condition is evaluated as passed, failed, or blocked.
 _Avoid_: GPT-created strategy, free-form recommendation
 
 **Action Readiness**:
-The deterministic result after capability gates and Strategy Rules are
-evaluated: `ready`, `blocked`, or `waiting_for_condition`.
+The deterministic condition result after Strategy Rules are evaluated:
+`ready`, `blocked`, or `waiting_for_condition`. Portfolio capability and funding
+constraints belong to Execution Readiness, not Action Readiness.
 _Avoid_: Trade approval, execution authorization
 
 **Decision Candidate**:
@@ -216,9 +220,17 @@ funding, target, and factor-mapping constraints. It never authorizes an order
 and always requires human approval.
 _Avoid_: Execution authorization, order
 
+**Decision Context**:
+One report-date snapshot that joins Market Risk, Portfolio Impact, current and
+target allocation, Daily Investment Budget, Investment Cash, Decision Candidate,
+Rule Execution Permission, and both readiness states, with evidence references.
+Its status describes context completeness, not permission to trade.
+_Avoid_: Recommendation, order ticket, model rationale
+
 **Decision State History**:
-One persisted daily snapshot of Action Readiness, Decision Candidate, rule
-states, and blocking reasons.
+One persisted daily Decision Context with Action Readiness, Execution Readiness,
+permission, proposed amount, rule states, evidence, and transition from the prior
+snapshot.
 _Avoid_: Transaction history, execution log
 
 **Market Actionability**:

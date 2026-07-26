@@ -106,7 +106,8 @@ The daily report contains:
 - separate market risk, portfolio exposure risk, and portfolio data-quality
   risk scores, with single-asset alerts distinct from correlated clusters;
 - configured cost-basis factor-tag exposure and an explicit mapping from market
-  risk components/clusters to portfolio impact screening scores;
+  risk components/clusters/asset alerts to structured portfolio impact
+  contributions and a dominant-factor screening score;
 - sourced valuation observations and like-for-like earnings estimate revisions,
   with freshness and materiality gates;
 - candidate-news entity linking, precision gating, and deduplicated
@@ -119,8 +120,10 @@ The daily report contains:
 - deterministic strategy rules with condition-level results, explicit
   `ready`/`blocked`/`waiting_for_condition` action readiness, and mandatory
   human approval for every decision candidate;
-- persisted daily decision-state history for comparing readiness, candidate
-  actions, rule states, factor exposures, and portfolio impact over time;
+- a Decision Context joining market risk, portfolio impact, allocations,
+  targets, daily budget, investment cash, rule permission, and readiness;
+- persisted daily decision-state history for comparing candidate and execution
+  transitions, reasons, evidence, factor impacts, and proposed amounts over time;
   and
 - an appendix with full price evidence, account detail, technical bounds, macro
   evidence, and raw price sources.

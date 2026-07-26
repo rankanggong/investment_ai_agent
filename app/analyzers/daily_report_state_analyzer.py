@@ -10,6 +10,7 @@ from app.models.analysis import (
     DataCoverage,
     DataCoverageRow,
     DataQualityState,
+    DecisionContext,
     FxCostComparison,
     FxState,
     FreshnessLayer,
@@ -1005,6 +1006,7 @@ def build_report_state(
     strategy_decision: StrategyDecisionState | None = None,
     portfolio_impact: PortfolioImpactAnalysis | None = None,
     fundamental_state: FundamentalEvidenceState | None = None,
+    decision_context: DecisionContext | None = None,
 ) -> ReportState:
     liquid_view = portfolio.liquid_asset_allocation
     return ReportState(
@@ -1105,6 +1107,25 @@ def build_report_state(
             strategy_decision.execution_readiness.currency
             if strategy_decision is not None
             else None
+        ),
+        decision_context_status=(
+            decision_context.status if decision_context is not None else "blocked"
+        ),
+        decision_transition=(
+            decision_context.transition if decision_context is not None else "baseline"
+        ),
+        dominant_portfolio_factor=(
+            decision_context.dominant_factor_id
+            if decision_context is not None
+            else None
+        ),
+        dominant_portfolio_impact_score=(
+            decision_context.dominant_impact_score
+            if decision_context is not None
+            else None
+        ),
+        decision_context_reasons=(
+            decision_context.reasons if decision_context is not None else ()
         ),
         portfolio_factor_exposures=(
             {
@@ -1295,6 +1316,17 @@ def extract_report_state(content: str | None) -> ReportState | None:
             ),
             proposed_action_amount=data.get("proposed_action_amount"),
             proposed_action_currency=data.get("proposed_action_currency"),
+            decision_context_status=data.get(
+                "decision_context_status", "blocked"
+            ),
+            decision_transition=data.get("decision_transition", "baseline"),
+            dominant_portfolio_factor=data.get("dominant_portfolio_factor"),
+            dominant_portfolio_impact_score=data.get(
+                "dominant_portfolio_impact_score"
+            ),
+            decision_context_reasons=tuple(
+                data.get("decision_context_reasons", [])
+            ),
             portfolio_factor_exposures=dict(
                 data.get("portfolio_factor_exposures", {})
             ),
@@ -1370,6 +1402,11 @@ def compare_report_states(
         "rule_execution_permission_status": "Rule execution permission",
         "proposed_action_amount": "Proposed action amount",
         "proposed_action_currency": "Proposed action currency",
+        "decision_context_status": "Decision context status",
+        "decision_transition": "Decision transition",
+        "dominant_portfolio_factor": "Dominant portfolio factor",
+        "dominant_portfolio_impact_score": "Dominant portfolio impact score",
+        "decision_context_reasons": "Decision context reasons",
         "portfolio_factor_exposures": "Portfolio factor exposures",
         "portfolio_impact_scores": "Portfolio impact scores",
         "valuation_status": "Valuation evidence status",
