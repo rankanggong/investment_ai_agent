@@ -1,6 +1,11 @@
 from datetime import date
 
 from app.models.price import PriceBar
+from app.models.analysis import (
+    ActionReadiness,
+    StrategyDecisionState,
+    StrategyRuleResult,
+)
 from app.storage.db import initialize_database
 from app.storage.repositories.price_repo import PriceRepository
 from app.storage.repositories.report_repo import ReportRepository
@@ -73,3 +78,45 @@ def test_report_repository_reads_latest_report_before_current_date(tmp_path):
     repo.insert_report("daily", date(2026, 7, 25), "Current", "current state")
 
     assert repo.get_previous_content("daily", date(2026, 7, 25)) == "older state"
+
+
+def test_report_repository_tracks_daily_decision_state_history(tmp_path):
+    db_path = tmp_path / "finance.db"
+    initialize_database(db_path)
+    repo = ReportRepository(db_path)
+    waiting = StrategyDecisionState(
+        rules=(
+            StrategyRuleResult(
+                "level_1", "waiting", "-2%", "<= -8%", "Not met.",
+                rule_id="level_1", symbol="QQQ", action="manual_add_level_1",
+            ),
+        ),
+        action_readiness=ActionReadiness(
+            "waiting_for_condition", None, None, None,
+            ("no_strategy_condition_triggered",),
+        ),
+    )
+    ready = StrategyDecisionState(
+        rules=(
+            StrategyRuleResult(
+                "level_1", "triggered", "-9%", "<= -8%", "Passed.",
+                rule_id="level_1", symbol="QQQ", action="manual_add_level_1",
+            ),
+        ),
+        action_readiness=ActionReadiness(
+            "ready", "manual_add_level_1", "QQQ", "level_1",
+            ("deterministic_rule_triggered",),
+        ),
+    )
+
+    repo.upsert_decision_state(date(2026, 7, 24), waiting)
+    repo.upsert_decision_state(date(2026, 7, 25), ready)
+
+    previous = repo.get_previous_decision_state(date(2026, 7, 25))
+    assert previous is not None
+    assert previous.readiness_status == "waiting_for_condition"
+    assert previous.rule_states == {"level_1": "waiting"}
+    assert [row.readiness_status for row in repo.list_decision_states()] == [
+        "waiting_for_condition",
+        "ready",
+    ]

@@ -1,7 +1,9 @@
+import json
 from datetime import date
 from pathlib import Path
 
 from app.storage.db import connect
+from app.models.analysis import DecisionHistoryRecord, StrategyDecisionState
 
 
 class ReportRepository:
@@ -49,3 +51,83 @@ class ReportRepository:
                 (report_type, before_date.isoformat()),
             ).fetchone()
         return None if row is None else str(row["content_markdown"])
+
+    def upsert_decision_state(
+        self,
+        report_date: date,
+        decision: StrategyDecisionState,
+    ) -> None:
+        readiness = decision.action_readiness
+        rule_states = {
+            result.rule_id: result.status
+            for result in decision.rules
+            if result.rule_id
+        }
+        with connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO decision_states
+                  (
+                    report_date, readiness_status, candidate_action, symbol,
+                    rule_id, rule_states_json, reasons_json
+                  )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(report_date) DO UPDATE SET
+                  readiness_status = excluded.readiness_status,
+                  candidate_action = excluded.candidate_action,
+                  symbol = excluded.symbol,
+                  rule_id = excluded.rule_id,
+                  rule_states_json = excluded.rule_states_json,
+                  reasons_json = excluded.reasons_json,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    report_date.isoformat(),
+                    readiness.status,
+                    readiness.candidate_action,
+                    readiness.symbol,
+                    readiness.rule_id,
+                    json.dumps(rule_states, sort_keys=True),
+                    json.dumps(readiness.reasons, ensure_ascii=False),
+                ),
+            )
+
+    def get_previous_decision_state(
+        self,
+        before_date: date,
+    ) -> DecisionHistoryRecord | None:
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM decision_states
+                WHERE report_date < ?
+                ORDER BY report_date DESC, id DESC
+                LIMIT 1
+                """,
+                (before_date.isoformat(),),
+            ).fetchone()
+        return None if row is None else _decision_record(row)
+
+    def list_decision_states(self) -> list[DecisionHistoryRecord]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM decision_states
+                ORDER BY report_date, id
+                """
+            ).fetchall()
+        return [_decision_record(row) for row in rows]
+
+
+def _decision_record(row) -> DecisionHistoryRecord:
+    return DecisionHistoryRecord(
+        report_date=date.fromisoformat(row["report_date"]),
+        readiness_status=row["readiness_status"],
+        candidate_action=row["candidate_action"],
+        symbol=row["symbol"],
+        rule_id=row["rule_id"],
+        rule_states=dict(json.loads(row["rule_states_json"])),
+        reasons=tuple(json.loads(row["reasons_json"])),
+    )

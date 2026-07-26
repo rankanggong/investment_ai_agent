@@ -5,6 +5,7 @@ from app.jobs.daily_market_job import generate_daily_report
 from app.steward.models import CashPosition, FxConversion, HoldingPosition, StewardState
 from app.steward.storage import StewardRepository, initialize_steward_database
 from app.storage.db import initialize_database
+from app.storage.repositories.report_repo import ReportRepository
 
 
 def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path):
@@ -75,3 +76,10 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     assert "Status: degraded" in content
     assert "- Weighted all-in cost basis: 6.79" in content
     assert "- Reason: usd_cnh_spot_unavailable" in content
+    assert "Action Readiness: blocked" in content
+    assert '"action_readiness_status": "blocked"' in content
+    assert '"gpt_task_ids": [' in content
+    decisions = ReportRepository(finance_db).list_decision_states()
+    assert len(decisions) == 1
+    assert decisions[0].report_date == date(2026, 7, 21)
+    assert decisions[0].readiness_status == "blocked"

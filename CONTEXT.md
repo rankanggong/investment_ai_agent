@@ -114,6 +114,26 @@ Whether supplied holdings, targets, cash roles, coverage, and snapshot freshness
 are sufficient to support portfolio-specific analysis.
 _Avoid_: Portfolio risk
 
+**Portfolio Freshness**:
+The separate age states of supplied Holding Snapshots, Cash Positions, and the
+FX market observation used by the report.
+_Avoid_: One portfolio-wide latest date
+
+**Target Allocation Policy**:
+User-supplied target weights, comparison basis, and tolerance used to evaluate
+allocation gaps. An empty policy does not imply equal weighting.
+_Avoid_: Model-implied target, market-value target
+
+**Daily Investment Budget**:
+The user-supplied maximum amount available to the report's daily action-sizing
+calculation, in a stated currency; it is not observed spending or cash balance.
+_Avoid_: Remaining cash, transaction limit
+
+**Action Sizing Policy**:
+A user-supplied mapping from a Decision Candidate action to a deterministic
+fraction of the Daily Investment Budget.
+_Avoid_: Strategy condition, order instruction
+
 **Portfolio Exposure Risk**:
 A score derived only from supplied investment-state facts such as allocation
 gaps, invested-sleeve concentration, and investment-cash coverage.
@@ -129,6 +149,33 @@ The use-specific `available`, `limited`, `degraded`, or `blocked` status for
 market, macro, portfolio, investment-action, FX, or news analysis. One blocked
 capability does not automatically block the overall report.
 _Avoid_: A single report-wide actionability flag
+
+**Strategy Rule**:
+A user-configured, deterministic mapping from named State metrics to one
+candidate action. Each condition is evaluated as passed, failed, or blocked.
+_Avoid_: GPT-created strategy, free-form recommendation
+
+**Action Readiness**:
+The deterministic result after capability gates and Strategy Rules are
+evaluated: `ready`, `blocked`, or `waiting_for_condition`.
+_Avoid_: Trade approval, execution authorization
+
+**Decision Candidate**:
+The highest-priority action produced by a triggered Strategy Rule after all
+required and safety conditions are evaluable. It always requires human
+approval.
+_Avoid_: Order, recommendation, automatic execution
+
+**Execution Readiness**:
+Whether a Decision Candidate has a configured Daily Investment Budget and
+Action Sizing Policy, together with its deterministic proposed amount. It never
+authorizes an order and always requires human approval.
+_Avoid_: Execution authorization, order
+
+**Decision State History**:
+One persisted daily snapshot of Action Readiness, Decision Candidate, rule
+states, and blocking reasons.
+_Avoid_: Transaction history, execution log
 
 **Market Actionability**:
 Whether market-price, breadth, volatility, and macro evidence are sufficient for
@@ -150,6 +197,11 @@ The current USD investment-cash balance, configured daily USD requirement,
 coverage days, latest USD/CNH spot, weighted all-in CNY/USD conversion cost
 basis, and spot-to-cost-basis difference.
 _Avoid_: FX recommendation, forecast
+
+**FX Coverage Days**:
+USD Investment Cash divided by the configured daily USD requirement. It is
+unavailable when that requirement is absent or non-positive.
+_Avoid_: FX recommendation, forecast horizon
 
 **Absolute-Move z-score (60D)**:
 The latest absolute one-day return minus the mean prior absolute one-day return,

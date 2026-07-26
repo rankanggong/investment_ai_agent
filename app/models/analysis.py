@@ -193,6 +193,23 @@ class PortfolioAllocationView:
 
 
 @dataclass(frozen=True)
+class FreshnessLayer:
+    status: str
+    latest_date: date | None
+    oldest_date: date | None
+    maximum_age_days: int | None
+    stale_after_days: int
+    reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PortfolioFreshness:
+    holdings: FreshnessLayer
+    cash: FreshnessLayer
+    fx_market: FreshnessLayer
+
+
+@dataclass(frozen=True)
 class PortfolioSummary:
     base_currency: str
     total_holding_cost: float | None
@@ -210,6 +227,9 @@ class PortfolioSummary:
     notes: list[str] = field(default_factory=list)
     invested_allocation: PortfolioAllocationView | None = None
     liquid_asset_allocation: PortfolioAllocationView | None = None
+    freshness: PortfolioFreshness | None = None
+    allocation_tolerance: float | None = None
+    daily_budget_currency: str | None = None
 
     @property
     def investable_cash(self) -> float | None:
@@ -291,6 +311,35 @@ class MarketEvidence:
 
 
 @dataclass(frozen=True)
+class StrategyCondition:
+    metric: str
+    operator: str
+    expected: bool | float | str
+
+
+@dataclass(frozen=True)
+class StrategyRuleDefinition:
+    rule_id: str
+    symbol: str
+    action: str
+    priority: int
+    enabled: bool
+    blocking: bool
+    conditions: tuple[StrategyCondition, ...] = ()
+
+
+@dataclass(frozen=True)
+class StrategyConditionResult:
+    metric: str
+    operator: str
+    expected: bool | float | str
+    observed: bool | float | str | None
+    status: str
+    reason: str
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class StrategyRuleResult:
     name: str
     status: str
@@ -301,6 +350,12 @@ class StrategyRuleResult:
     atr_multiple: float | None = None
     historical_percentile: float | None = None
     evidence_refs: tuple[str, ...] = ()
+    rule_id: str = ""
+    symbol: str = ""
+    action: str = ""
+    priority: int = 0
+    blocking: bool = False
+    condition_results: tuple[StrategyConditionResult, ...] = ()
 
     @property
     def absolute_move_z_score_60d(self) -> float | None:
@@ -309,6 +364,53 @@ class StrategyRuleResult:
     @property
     def absolute_move_percentile_252d(self) -> float | None:
         return self.historical_percentile
+
+
+@dataclass(frozen=True)
+class ActionReadiness:
+    status: str
+    candidate_action: str | None
+    symbol: str | None
+    rule_id: str | None
+    reasons: tuple[str, ...]
+    evidence_refs: tuple[str, ...] = ()
+    human_approval_required: bool = True
+
+
+@dataclass(frozen=True)
+class ExecutionReadiness:
+    status: str
+    proposed_amount: float | None
+    currency: str | None
+    sizing_method: str | None
+    reasons: tuple[str, ...]
+    human_approval_required: bool = True
+
+
+@dataclass(frozen=True)
+class StrategyDecisionState:
+    rules: tuple[StrategyRuleResult, ...]
+    action_readiness: ActionReadiness
+    execution_readiness: ExecutionReadiness = field(
+        default_factory=lambda: ExecutionReadiness(
+            "blocked",
+            None,
+            None,
+            None,
+            ("human_approval_required",),
+        )
+    )
+
+
+@dataclass(frozen=True)
+class DecisionHistoryRecord:
+    report_date: date
+    readiness_status: str
+    candidate_action: str | None
+    symbol: str | None
+    rule_id: str | None
+    rule_states: dict[str, str]
+    reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -349,6 +451,7 @@ class FxState:
     difference_pct: float | None
     reasons: tuple[str, ...] = ()
     comparisons: tuple[FxCostComparison, ...] = ()
+    coverage_status: str = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -447,6 +550,15 @@ class ReportState:
     fx_spot_usd_cnh: float | None = None
     fx_cost_basis: float | None = None
     fx_difference_pct: float | None = None
+    action_readiness_status: str = "blocked"
+    candidate_action: str | None = None
+    candidate_symbol: str | None = None
+    candidate_rule_id: str | None = None
+    execution_readiness_status: str = "blocked"
+    proposed_action_amount: float | None = None
+    proposed_action_currency: str | None = None
+    strategy_rule_states: dict[str, str] = field(default_factory=dict)
+    gpt_task_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

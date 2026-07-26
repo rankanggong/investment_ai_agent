@@ -27,6 +27,7 @@ from app.models.analysis import (
     RiskAssessment,
     SectorRotation,
     StrategyRuleResult,
+    StrategyDecisionState,
 )
 from app.analyzers.daily_report_state_analyzer import serialize_report_state
 from app.steward.models import (
@@ -57,6 +58,7 @@ def render_daily_report(
     fx_state: FxState | None = None,
     key_evidence: list[MarketEvidence] | None = None,
     strategy_rules: list[StrategyRuleResult] | None = None,
+    strategy_decision: StrategyDecisionState | None = None,
     changes: list[str] | None = None,
     gpt_questions: list[str] | None = None,
     gpt_tasks: list[GptAnalysisTask] | None = None,
@@ -120,7 +122,7 @@ def render_daily_report(
         "## 0. Executive State",
         "",
     ]
-    lines.extend(_render_executive_states(effective_use_states))
+    lines.extend(_render_executive_states(effective_use_states, strategy_decision))
     lines.extend(["", "## 1. Data Quality", ""])
     lines.extend(
         _render_data_quality_issues(
@@ -164,10 +166,12 @@ def render_daily_report(
     lines.extend(
         [
             "",
-            "## 5. Triggered Rules",
+            "## 5. Strategy Decision and Rules",
             "",
         ]
     )
+    lines.extend(_render_action_readiness(strategy_decision))
+    lines.extend(["", "Rule Evaluations:", ""])
     lines.extend(_render_triggered_rules(effective_rules))
     lines.extend(["", f"Market risk: {effective_risk.score}/100 ({effective_risk.level})"])
     lines.extend(f"- {reason}" for reason in effective_risk.explanations)
@@ -254,8 +258,11 @@ def write_daily_report(report_dir: Path, report_date: date, content: str) -> Pat
     return path
 
 
-def _render_executive_states(states: ReportUseStates) -> list[str]:
-    return [
+def _render_executive_states(
+    states: ReportUseStates,
+    decision: StrategyDecisionState | None,
+) -> list[str]:
+    lines = [
         f"[STATE:MARKET] Market risk is {states.market.risk}; market regime is "
         f"{states.market.regime}; market analysis is "
         f"{states.market.actionability}.",
@@ -266,6 +273,23 @@ def _render_executive_states(states: ReportUseStates) -> list[str]:
         f"[STATE:NEWS] News quality is {states.news.quality}; news-based causal "
         f"analysis is {states.news.actionability}.",
     ]
+    readiness = decision.action_readiness if decision is not None else None
+    execution = decision.execution_readiness if decision is not None else None
+    lines.extend([
+        "",
+        f"[STATE:ACTION] Action readiness is "
+        f"{readiness.status if readiness is not None else 'blocked'}; "
+        f"candidate is "
+        f"{readiness.candidate_action if readiness and readiness.candidate_action else 'none'}; "
+        "human approval is required.",
+        "",
+        f"[STATE:EXECUTION] Execution readiness is "
+        f"{execution.status if execution is not None else 'blocked'}; "
+        f"proposed amount is "
+        f"{_format_money(execution.proposed_amount, execution.currency or '') if execution else 'N/A'}; "
+        "no execution is authorized.",
+    ])
+    return lines
 
 
 def _render_data_quality_issues(
@@ -418,7 +442,9 @@ def _render_portfolio_summary(
         [
             "",
             f"Daily investment budget: "
-            f"{_format_money(summary.daily_investment_budget, summary.base_currency)}",
+            f"{_format_money(summary.daily_investment_budget, summary.daily_budget_currency or summary.base_currency)}",
+            "",
+            f"Target allocation tolerance: {_format_percent(summary.allocation_tolerance)}",
             "",
             f"USD cash: USD {summary.usd_cash:.2f}",
             "",
@@ -443,6 +469,26 @@ def _render_portfolio_summary(
             ),
         ]
     )
+    if summary.freshness is not None:
+        lines.extend([
+            "",
+            "Portfolio freshness layers:",
+            "",
+            "| Layer | Status | Latest | Oldest | Maximum Age | Stale After |",
+            "|---|---|---|---|---:|---:|",
+        ])
+        for name, layer in (
+            ("holdings", summary.freshness.holdings),
+            ("cash", summary.freshness.cash),
+            ("fx_market", summary.freshness.fx_market),
+        ):
+            lines.append(
+                f"| {name} | {layer.status} | "
+                f"{layer.latest_date.isoformat() if layer.latest_date else 'N/A'} | "
+                f"{layer.oldest_date.isoformat() if layer.oldest_date else 'N/A'} | "
+                f"{layer.maximum_age_days if layer.maximum_age_days is not None else 'N/A'} | "
+                f"{layer.stale_after_days} |"
+            )
     if summary.notes:
         lines.extend(["", "Notes:"])
         lines.extend(f"- {note}" for note in summary.notes)
@@ -504,12 +550,15 @@ def _render_triggered_rules(
     if not rules:
         return ["No strategy rule is triggered or near its threshold."]
     lines = [
-        "| Rule | Status | Observed | Threshold | Absolute-Move z-score 60D | ATR | Absolute-Move Percentile 252D | Evidence Refs | Detection Reason |",
-        "|---|---|---|---|---:|---:|---:|---|---|",
+        "| Rule ID / Name | Symbol | Action | Status | Blocking | Observed | Threshold | Absolute-Move z-score 60D | ATR | Absolute-Move Percentile 252D | Evidence Refs | Detection Reason |",
+        "|---|---|---|---|---|---|---|---:|---:|---:|---|---|",
     ]
     for rule in rules:
         lines.append(
-            f"| {rule.name} | {rule.status} | {_escape_cell(rule.observed)} | "
+            f"| {rule.rule_id or rule.name} | {rule.symbol or 'N/A'} | "
+            f"{rule.action or 'monitor'} | {rule.status} | "
+            f"{'yes' if rule.blocking else 'no'} | "
+            f"{_escape_cell(rule.observed)} | "
             f"{_escape_cell(rule.threshold)} | "
             f"{_format_decimal_or_na(rule.absolute_move_z_score_60d)} | "
             f"{_format_multiple(rule.atr_multiple)} | "
@@ -517,6 +566,42 @@ def _render_triggered_rules(
             f"{_escape_cell(', '.join(rule.evidence_refs) or 'N/A')} | "
             f"{_escape_cell(rule.reason)} |"
         )
+    return lines
+
+
+def _render_action_readiness(
+    decision: StrategyDecisionState | None,
+) -> list[str]:
+    if decision is None:
+        return [
+            "Action Readiness: blocked",
+            "- Reason: strategy decision was not evaluated.",
+            "- Human approval required: yes.",
+        ]
+    readiness = decision.action_readiness
+    execution = decision.execution_readiness
+    lines = [
+        "Evidence Ref: STATE:ACTION_READINESS",
+        "",
+        f"Action Readiness: {readiness.status}",
+        f"- Candidate action: {readiness.candidate_action or 'none'}",
+        f"- Symbol: {readiness.symbol or 'N/A'}",
+        f"- Triggering rule: {readiness.rule_id or 'N/A'}",
+        "- Human approval required: yes.",
+        "",
+        "Evidence Ref: STATE:EXECUTION_READINESS",
+        "",
+        f"Execution Readiness: {execution.status}",
+        f"- Proposed amount: {_format_money(execution.proposed_amount, execution.currency or '')}",
+        f"- Sizing method: {execution.sizing_method or 'N/A'}",
+        "- Execution authorized: no.",
+    ]
+    lines.extend(f"- Reason: {reason}" for reason in readiness.reasons)
+    if readiness.evidence_refs:
+        lines.append(
+            "- Evidence refs: " + ", ".join(readiness.evidence_refs)
+        )
+    lines.extend(f"- Execution reason: {reason}" for reason in execution.reasons)
     return lines
 
 
@@ -612,6 +697,7 @@ def _render_fx_state(state: FxState | None) -> list[str]:
             if state.coverage_days is None
             else f"- Coverage days: {state.coverage_days:.1f}"
         ),
+        f"- Coverage status: {state.coverage_status}",
         f"- USD/CNH spot: {_format_decimal_or_na(state.spot_usd_cnh)}",
         f"- Weighted all-in cost basis: {_format_decimal_or_na(state.cost_basis)}",
         f"- Spot versus cost basis: {_format_percent(state.difference_pct)}",

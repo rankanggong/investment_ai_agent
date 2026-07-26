@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -23,11 +24,13 @@ from app.analyzers.macro_context_analyzer import analyze_macro_context
 from app.analyzers.price_move_analyzer import analyze_price_moves
 from app.analyzers.report_signal_analyzer import analyze_report_signals
 from app.analyzers.sector_rotation_analyzer import analyze_sector_rotation
+from app.analyzers.strategy_rule_engine import evaluate_strategy_decision
 from app.config import load_report_profile, load_watchlist
 from app.models.analysis import NewsQualityGate
 from app.outputs.markdown_writer import render_daily_report, write_daily_report
 from app.steward.models import PortfolioReportState
 from app.steward.storage import StewardRepository, initialize_steward_database
+from app.storage.db import initialize_database
 from app.storage.repositories.price_repo import PriceRepository
 from app.storage.repositories.report_repo import ReportRepository
 
@@ -40,6 +43,7 @@ def generate_daily_report(
     steward_db_path: Path | None = None,
     report_profile_path: Path | None = None,
 ) -> Path:
+    initialize_database(db_path)
     watchlist = load_watchlist(watchlist_path)
     report_profile = load_report_profile(report_profile_path)
     repo = PriceRepository(db_path)
@@ -137,13 +141,23 @@ def generate_daily_report(
         report_profile,
         fx_state,
     )
-    strategy_rules = evaluate_strategy_rules(
+    monitoring_rules = evaluate_strategy_rules(
         signals,
         sector_rotation,
         portfolio_summary,
         key_evidence,
         use_states,
     )
+    strategy_decision = evaluate_strategy_decision(
+        report_profile.strategy_rules,
+        signals,
+        macro_context,
+        market_breadth,
+        use_states,
+        daily_budget=report_profile.daily_budget,
+        action_sizing=report_profile.action_sizing,
+    )
+    strategy_rules = [*strategy_decision.rules, *monitoring_rules]
     report_state = build_report_state(
         use_states,
         market_risk,
@@ -152,6 +166,7 @@ def generate_daily_report(
         key_evidence,
         portfolio_summary,
         fx_state,
+        strategy_decision,
     )
     report_repo = ReportRepository(db_path)
     previous_state = extract_report_state(
@@ -165,6 +180,11 @@ def generate_daily_report(
         strategy_rules,
         key_evidence,
         use_states,
+        strategy_decision,
+    )
+    report_state = replace(
+        report_state,
+        gpt_task_ids=tuple(task.task_id for task in gpt_tasks),
     )
     price_sources = {
         symbol: bars[-1].source
@@ -191,6 +211,7 @@ def generate_daily_report(
         fx_state=fx_state,
         key_evidence=key_evidence,
         strategy_rules=strategy_rules,
+        strategy_decision=strategy_decision,
         changes=changes,
         gpt_tasks=gpt_tasks,
         report_state=report_state,
@@ -203,6 +224,7 @@ def generate_daily_report(
         title=f"Daily Market State - {effective_date.isoformat()}",
         content=content,
     )
+    report_repo.upsert_decision_state(effective_date, strategy_decision)
     return path
 
 

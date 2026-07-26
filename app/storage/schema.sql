@@ -39,6 +39,19 @@ CREATE TABLE IF NOT EXISTS reports (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS decision_states (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_date TEXT NOT NULL UNIQUE,
+  readiness_status TEXT NOT NULL,
+  candidate_action TEXT,
+  symbol TEXT,
+  rule_id TEXT,
+  rule_states_json TEXT NOT NULL DEFAULT '{}',
+  reasons_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS news_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,

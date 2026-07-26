@@ -1,8 +1,84 @@
 {
   "base_currency": "CNY",
-  "target_allocations": {},
-  "daily_investment_budget": null,
+  "target_allocation": {
+    "basis": "supplied_invested_holding_cost",
+    "weights": {},
+    "tolerance": null
+  },
+  "daily_budget": {
+    "amount": null,
+    "currency": "CNY",
+    "minimum_action_amount": null,
+    "maximum_action_amount": null
+  },
   "usd_daily_spend": null,
+  "action_sizing": [],
+  "strategy_rules": [
+    {
+      "id": "qqq_pause_on_negative_revision",
+      "symbol": "QQQ",
+      "action": "pause",
+      "priority": 100,
+      "enabled": true,
+      "blocking": true,
+      "conditions": [
+        {
+          "metric": "earnings_revision_negative",
+          "operator": "==",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "qqq_manual_add_level_2",
+      "symbol": "QQQ",
+      "action": "manual_add_level_2",
+      "priority": 30,
+      "enabled": true,
+      "blocking": false,
+      "conditions": [
+        {
+          "metric": "drawdown_from_252d_high",
+          "operator": "<=",
+          "value": -0.12
+        },
+        {
+          "metric": "vix_level_percentile_252d",
+          "operator": ">",
+          "value": 0.8
+        }
+      ]
+    },
+    {
+      "id": "qqq_manual_add_level_1",
+      "symbol": "QQQ",
+      "action": "manual_add_level_1",
+      "priority": 20,
+      "enabled": true,
+      "blocking": false,
+      "conditions": [
+        {
+          "metric": "drawdown_from_252d_high",
+          "operator": "<=",
+          "value": -0.08
+        },
+        {
+          "metric": "credit_state",
+          "operator": "!=",
+          "value": "credit_stress"
+        }
+      ]
+    },
+    {
+      "id": "qqq_base_investment",
+      "symbol": "QQQ",
+      "action": "base_investment",
+      "priority": 10,
+      "enabled": true,
+      "blocking": false,
+      "conditions": []
+    }
+  ],
   "gpt_questions": [
     "中期趋势与短期反弹是否一致，哪些资产出现背离？",
     "市场风险、组合敞口风险与组合数据质量风险分别由哪些证据驱动，什么变化会使评分下降？",

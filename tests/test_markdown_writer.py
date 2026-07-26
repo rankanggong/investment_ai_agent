@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.models.analysis import (
+    ActionReadiness,
     CompanyPriceBound,
     CompanyPriceBounds,
     DataCoverage,
@@ -21,6 +22,7 @@ from app.models.analysis import (
     ReportUseStates,
     SectorRotation,
     StrategyRuleResult,
+    StrategyDecisionState,
 )
 from app.outputs.markdown_writer import render_daily_report
 from app.steward.models import (
@@ -76,7 +78,7 @@ def test_render_daily_report_uses_new_section_order_and_appendix():
         "## 2. Portfolio Summary",
         "## 3. Changes Since Previous Report",
         "## 4. Key Market Evidence",
-        "## 5. Triggered Rules",
+        "## 5. Strategy Decision and Rules",
         "## 6. GPT Analysis Tasks",
         "## Appendix",
     ]
@@ -261,10 +263,55 @@ def test_key_evidence_separates_structure_from_short_term_and_explains_risk():
     )
 
     assert "medium_term_downtrend" in content
-    assert "| Medium-term/short-term divergence | triggered | QQQ |" in content
+    assert (
+        "| Medium-term/short-term divergence | N/A | monitor | triggered | no | "
+        "QQQ |" in content
+    )
     assert "Market risk: 45/100 (elevated)" in content
     assert "- Data-quality penalty: 20 points." in content
     assert "1. What confirms the rebound?" in content
+
+
+def test_report_renders_deterministic_action_readiness_and_candidate():
+    rule = StrategyRuleResult(
+        name="qqq_level_1",
+        status="triggered",
+        observed="drawdown=-0.0900",
+        threshold="drawdown <= -0.08",
+        reason="All configured conditions passed.",
+        evidence_refs=("PRICE:QQQ:2026-07-25",),
+        rule_id="qqq_level_1",
+        symbol="QQQ",
+        action="manual_add_level_1",
+        priority=20,
+    )
+    decision = StrategyDecisionState(
+        (rule,),
+        ActionReadiness(
+            "ready",
+            "manual_add_level_1",
+            "QQQ",
+            "qqq_level_1",
+            ("deterministic_rule_triggered", "human_approval_required"),
+            ("PRICE:QQQ:2026-07-25",),
+        ),
+    )
+
+    content = render_daily_report(
+        report_date=date(2026, 7, 25),
+        price_signals={},
+        sector_rotation=sector_rotation(),
+        strategy_rules=[rule],
+        strategy_decision=decision,
+    )
+
+    assert "[STATE:ACTION] Action readiness is ready" in content
+    assert "Action Readiness: ready" in content
+    assert "- Candidate action: manual_add_level_1" in content
+    assert "- Triggering rule: qqq_level_1" in content
+    assert "- Human approval required: yes" in content
+    assert "[STATE:EXECUTION] Execution readiness is blocked" in content
+    assert "- Execution authorized: no." in content
 
 
 def test_company_bounds_and_real_macro_evidence_are_in_appendix():

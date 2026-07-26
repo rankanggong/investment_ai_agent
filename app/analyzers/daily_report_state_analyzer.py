@@ -12,6 +12,7 @@ from app.models.analysis import (
     DataQualityState,
     FxCostComparison,
     FxState,
+    FreshnessLayer,
     GptAnalysisTask,
     MarketBreadth,
     MarketEvidence,
@@ -21,6 +22,7 @@ from app.models.analysis import (
     NewsState,
     PortfolioAllocation,
     PortfolioAllocationView,
+    PortfolioFreshness,
     PortfolioDecisionState,
     PortfolioRiskAssessment,
     PortfolioSummary,
@@ -33,6 +35,7 @@ from app.models.analysis import (
     RiskClusterAssessment,
     SectorRotation,
     StrategyRuleResult,
+    StrategyDecisionState,
 )
 from app.models.price import PriceBar
 from app.steward.models import PortfolioReportState
@@ -42,6 +45,7 @@ REPORT_STATE_PREFIX = "<!-- report-state: "
 REPORT_STATE_SUFFIX = " -->"
 KEY_EVIDENCE_LIMIT = 10
 PORTFOLIO_STALE_DAYS = 3
+FX_MARKET_STALE_DAYS = 1
 
 RISK_CLUSTERS = {
     "broad_equity_growth": {"SPY", "QQQ"},
@@ -71,6 +75,11 @@ def analyze_portfolio_summary(
     report_date: date | None = None,
 ) -> PortfolioSummary:
     if portfolio_state is None:
+        unavailable_freshness = PortfolioFreshness(
+            _freshness_layer([], report_date, PORTFOLIO_STALE_DAYS, "holdings"),
+            _freshness_layer([], report_date, PORTFOLIO_STALE_DAYS, "cash"),
+            _freshness_layer([], report_date, FX_MARKET_STALE_DAYS, "fx_market"),
+        )
         unavailable_view = PortfolioAllocationView(
             status="unavailable",
             basis="supplied_holding_cost_plus_cash_balance",
@@ -96,6 +105,9 @@ def analyze_portfolio_summary(
                 reason="portfolio_state_not_supplied",
             ),
             liquid_asset_allocation=unavailable_view,
+            freshness=unavailable_freshness,
+            allocation_tolerance=profile.target_allocation.tolerance,
+            daily_budget_currency=profile.daily_budget.currency,
         )
 
     fx_rates = _fx_rates(portfolio_state, profile.base_currency, price_signals)
@@ -148,9 +160,16 @@ def analyze_portfolio_summary(
         if profile.usd_daily_spend and profile.usd_daily_spend > 0
         else None
     )
-    snapshot_status = _portfolio_snapshot_status(portfolio_state, report_date)
+    freshness = _portfolio_freshness(
+        portfolio_state, price_signals.get("USD/CNH"), report_date
+    )
+    snapshot_status = _combined_portfolio_freshness(freshness)
     if not profile.target_allocations:
         notes.append("Target allocations are not configured.")
+    elif profile.target_allocation.tolerance is None:
+        notes.append("Target allocation tolerance is not configured.")
+    if profile.daily_budget.amount is None:
+        notes.append("Daily investment budget is not configured.")
     if cash_by_role["unknown"]:
         notes.append("Unknown-role cash is excluded from investment cash.")
     invested_view = PortfolioAllocationView(
@@ -216,6 +235,9 @@ def analyze_portfolio_summary(
         notes=_deduplicate(notes),
         invested_allocation=invested_view,
         liquid_asset_allocation=liquid_view,
+        freshness=freshness,
+        allocation_tolerance=profile.target_allocation.tolerance,
+        daily_budget_currency=profile.daily_budget.currency,
     )
 
 
@@ -262,7 +284,6 @@ def combine_data_quality(
             )
         )
     else:
-        snapshot_status = _portfolio_snapshot_status(portfolio_state, report_date)
         snapshot_dates = [
             item.as_of_date
             for item in [
@@ -274,12 +295,32 @@ def combine_data_quality(
             DataCoverageRow(
                 "Portfolio",
                 "cash and holdings",
-                snapshot_status,
+                _portfolio_snapshot_status(portfolio_state, report_date),
                 len(snapshot_dates),
                 max(snapshot_dates).isoformat() if snapshot_dates else "N/A",
-                f"Snapshots older than {PORTFOLIO_STALE_DAYS} days are stale.",
+                "Compatibility aggregate; use the holdings and cash rows for "
+                "layer-specific freshness.",
             )
         )
+        for item, dates in (
+            ("holdings", [row.as_of_date for row in portfolio_state.holdings]),
+            ("cash", [row.as_of_date for row in portfolio_state.cash_positions]),
+        ):
+            freshness = _freshness_layer(
+                dates, report_date, PORTFOLIO_STALE_DAYS, item
+            )
+            rows.append(
+                DataCoverageRow(
+                    "Portfolio",
+                    item,
+                    freshness.status,
+                    len(dates),
+                    freshness.latest_date.isoformat()
+                    if freshness.latest_date else "N/A",
+                    f"{item.title()} snapshots older than "
+                    f"{PORTFOLIO_STALE_DAYS} days are stale.",
+                )
+            )
         unknown_roles = sum(
             position.cash_role == "unknown"
             for position in portfolio_state.cash_positions
@@ -480,12 +521,17 @@ def assess_portfolio_decision_risk(
     )
     data_quality_score = min(100, stale_points + unknown_role_points)
     readiness_reasons: list[str] = []
-    if summary.snapshot_status in {"stale", "unavailable"}:
-        readiness_reasons.append(
-            "portfolio snapshots are unavailable"
-            if summary.snapshot_status == "unavailable"
-            else "portfolio snapshots are stale"
-        )
+    if summary.freshness is not None:
+        for name, layer in (
+            ("holding", summary.freshness.holdings),
+            ("cash", summary.freshness.cash),
+        ):
+            if layer.status in {"stale", "unavailable"}:
+                readiness_reasons.append(
+                    f"{name} snapshots are {layer.status}"
+                )
+    elif summary.snapshot_status in {"stale", "unavailable"}:
+        readiness_reasons.append(f"portfolio snapshots are {summary.snapshot_status}")
     if (summary.unknown_cash or 0) > 0:
         readiness_reasons.append("cash roles are unknown")
     return PortfolioRiskAssessment(
@@ -557,6 +603,12 @@ def build_report_use_states(
     action_reasons = list(portfolio_reasons)
     if profile is not None and not profile.target_allocations:
         action_reasons.append("target allocations are not configured")
+    if (
+        profile is not None
+        and profile.target_allocations
+        and profile.target_allocation.tolerance is None
+    ):
+        action_reasons.append("target allocation tolerance is not configured")
     if profile is not None and profile.daily_investment_budget is None:
         action_reasons.append("daily investment budget is not configured")
     portfolio_actionability = "blocked" if action_reasons else "available"
@@ -713,11 +765,14 @@ def analyze_fx_state(
         reasons.append("cny_usd_cost_basis_unavailable")
     if spot is None:
         reasons.append("usd_cnh_spot_unavailable")
+    if portfolio_summary.usd_daily_spend is None:
+        reasons.append("usd_daily_spend_not_configured")
+    coverage_status = _coverage_status(portfolio_summary.usd_coverage_days)
     status = (
         "blocked"
         if portfolio_state is None or cost_basis is None
         else "degraded"
-        if spot is None
+        if spot is None or portfolio_summary.usd_daily_spend is None
         else "available"
     )
     return FxState(
@@ -734,6 +789,7 @@ def analyze_fx_state(
         ),
         reasons=tuple(reasons),
         comparisons=tuple(comparisons),
+        coverage_status=coverage_status,
     )
 
 
@@ -876,6 +932,7 @@ def build_report_state(
     evidence: list[MarketEvidence],
     portfolio: PortfolioSummary,
     fx_state: FxState | None = None,
+    strategy_decision: StrategyDecisionState | None = None,
 ) -> ReportState:
     liquid_view = portfolio.liquid_asset_allocation
     return ReportState(
@@ -936,6 +993,50 @@ def build_report_state(
         fx_cost_basis=fx_state.cost_basis if fx_state is not None else None,
         fx_difference_pct=(
             fx_state.difference_pct if fx_state is not None else None
+        ),
+        action_readiness_status=(
+            strategy_decision.action_readiness.status
+            if strategy_decision is not None
+            else "blocked"
+        ),
+        candidate_action=(
+            strategy_decision.action_readiness.candidate_action
+            if strategy_decision is not None
+            else None
+        ),
+        candidate_symbol=(
+            strategy_decision.action_readiness.symbol
+            if strategy_decision is not None
+            else None
+        ),
+        candidate_rule_id=(
+            strategy_decision.action_readiness.rule_id
+            if strategy_decision is not None
+            else None
+        ),
+        execution_readiness_status=(
+            strategy_decision.execution_readiness.status
+            if strategy_decision is not None
+            else "blocked"
+        ),
+        proposed_action_amount=(
+            strategy_decision.execution_readiness.proposed_amount
+            if strategy_decision is not None
+            else None
+        ),
+        proposed_action_currency=(
+            strategy_decision.execution_readiness.currency
+            if strategy_decision is not None
+            else None
+        ),
+        strategy_rule_states=(
+            {
+                result.rule_id: result.status
+                for result in strategy_decision.rules
+                if result.rule_id
+            }
+            if strategy_decision is not None
+            else {}
         ),
     )
 
@@ -1066,6 +1167,19 @@ def extract_report_state(content: str | None) -> ReportState | None:
             fx_spot_usd_cnh=data.get("fx_spot_usd_cnh"),
             fx_cost_basis=data.get("fx_cost_basis"),
             fx_difference_pct=data.get("fx_difference_pct"),
+            action_readiness_status=data.get(
+                "action_readiness_status", "blocked"
+            ),
+            candidate_action=data.get("candidate_action"),
+            candidate_symbol=data.get("candidate_symbol"),
+            candidate_rule_id=data.get("candidate_rule_id"),
+            execution_readiness_status=data.get(
+                "execution_readiness_status", "blocked"
+            ),
+            proposed_action_amount=data.get("proposed_action_amount"),
+            proposed_action_currency=data.get("proposed_action_currency"),
+            strategy_rule_states=dict(data.get("strategy_rule_states", {})),
+            gpt_task_ids=tuple(data.get("gpt_task_ids", [])),
         )
     return None
 
@@ -1117,6 +1231,14 @@ def compare_report_states(
         "fx_spot_usd_cnh": "USD/CNH spot",
         "fx_cost_basis": "FX cost basis",
         "fx_difference_pct": "FX spot-to-cost difference",
+        "action_readiness_status": "Action readiness",
+        "candidate_action": "Decision candidate action",
+        "candidate_symbol": "Decision candidate symbol",
+        "candidate_rule_id": "Decision candidate rule",
+        "execution_readiness_status": "Execution readiness",
+        "proposed_action_amount": "Proposed action amount",
+        "proposed_action_currency": "Proposed action currency",
+        "strategy_rule_states": "Strategy rule states",
     }
     changes = [
         f"{label}: {_state_value(getattr(previous, field))} → "
@@ -1133,6 +1255,7 @@ def build_gpt_tasks(
     rules: list[StrategyRuleResult],
     evidence: list[MarketEvidence],
     use_states: ReportUseStates,
+    strategy_decision: StrategyDecisionState | None = None,
 ) -> list[GptAnalysisTask]:
     market_refs = tuple(row.evidence_ref for row in evidence[:6])
     evidence_by_symbol = {row.symbol: row.evidence_ref for row in evidence}
@@ -1162,6 +1285,30 @@ def build_gpt_tasks(
                 tuple(dict.fromkeys(
                     ref for rule in rules for ref in rule.evidence_refs
                 )),
+                "ready",
+                (),
+            )
+        )
+    if strategy_decision is not None:
+        readiness = strategy_decision.action_readiness
+        questions.append(
+            (
+                "explain_strategy_decision",
+                "根据确定性规则的计算结果，解释 action readiness、命中的条件与"
+                "缺失证据；不要创建、修改或替代策略规则。",
+                tuple(
+                    dict.fromkeys(
+                        [
+                            "STATE:ACTION_READINESS",
+                            *readiness.evidence_refs,
+                            *(
+                                ref
+                                for rule in strategy_decision.rules
+                                for ref in rule.evidence_refs
+                            ),
+                        ]
+                    )
+                ),
                 "ready",
                 (),
             )
@@ -1219,7 +1366,8 @@ def build_gpt_tasks(
 
     available_output = (
         "Conclusion; supporting evidence linked by ref; counterevidence; "
-        "confidence; confirmation conditions; invalidation conditions."
+        "confidence; confirmation conditions; invalidation conditions; do not "
+        "invent or modify strategy rules."
     )
     blocked_output = (
         "State that the task is blocked; list missing or stale inputs by evidence "
@@ -1351,6 +1499,81 @@ def _portfolio_snapshot_status(
         if any((report_date - snapshot).days > PORTFOLIO_STALE_DAYS for snapshot in snapshots)
         else "available"
     )
+
+
+def _portfolio_freshness(
+    state: PortfolioReportState,
+    fx_signal: PriceSignal | None,
+    report_date: date | None,
+) -> PortfolioFreshness:
+    return PortfolioFreshness(
+        holdings=_freshness_layer(
+            [item.as_of_date for item in state.holdings],
+            report_date,
+            PORTFOLIO_STALE_DAYS,
+            "holdings",
+        ),
+        cash=_freshness_layer(
+            [item.as_of_date for item in state.cash_positions],
+            report_date,
+            PORTFOLIO_STALE_DAYS,
+            "cash",
+        ),
+        fx_market=_freshness_layer(
+            [fx_signal.latest_date] if fx_signal and fx_signal.latest_date else [],
+            report_date,
+            FX_MARKET_STALE_DAYS,
+            "fx_market",
+        ),
+    )
+
+
+def _freshness_layer(
+    dates: list[date],
+    report_date: date | None,
+    stale_after_days: int,
+    name: str,
+) -> FreshnessLayer:
+    if not dates:
+        return FreshnessLayer(
+            "unavailable", None, None, None, stale_after_days,
+            (f"{name}_snapshot_unavailable",),
+        )
+    latest = max(dates)
+    oldest = min(dates)
+    maximum_age = (
+        max((report_date - item).days for item in dates)
+        if report_date is not None
+        else None
+    )
+    status = (
+        "stale"
+        if maximum_age is not None and maximum_age > stale_after_days
+        else "available"
+    )
+    reasons = (f"{name}_snapshot_stale",) if status == "stale" else ()
+    return FreshnessLayer(
+        status, latest, oldest, maximum_age, stale_after_days, reasons
+    )
+
+
+def _combined_portfolio_freshness(freshness: PortfolioFreshness) -> str:
+    statuses = {freshness.holdings.status, freshness.cash.status}
+    if "unavailable" in statuses:
+        return "unavailable"
+    if "stale" in statuses:
+        return "stale"
+    return "available"
+
+
+def _coverage_status(coverage_days: float | None) -> str:
+    if coverage_days is None:
+        return "unavailable"
+    if coverage_days < 90:
+        return "below_90_days"
+    if coverage_days < 120:
+        return "below_120_days"
+    return "at_least_120_days"
 
 
 def _overall_quality_status(rows: list[DataCoverageRow]) -> str:

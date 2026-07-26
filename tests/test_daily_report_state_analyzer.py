@@ -122,6 +122,31 @@ def test_portfolio_summary_separates_cash_roles_and_invested_holdings():
     assert "invested holding cost" in result.notes[0]
 
 
+def test_portfolio_freshness_is_layered_by_holdings_cash_and_fx_market():
+    state = portfolio_state()
+    result = analyze_portfolio_summary(
+        PortfolioReportState(
+            holdings=state.holdings,
+            fx_conversions=state.fx_conversions,
+            cash_positions=[
+                CashPosition(
+                    "bank", "usd", "USD", Decimal("1200"),
+                    date(2026, 7, 1), cash_role="investment_cash",
+                )
+            ],
+        ),
+        ReportProfile(),
+        {"USD/CNH": signal("USD/CNH", latest=7.0)},
+        date(2026, 7, 25),
+    )
+
+    assert result.freshness is not None
+    assert result.freshness.holdings.status == "available"
+    assert result.freshness.cash.status == "stale"
+    assert result.freshness.fx_market.status == "available"
+    assert result.snapshot_status == "stale"
+
+
 def test_market_risk_counts_correlated_assets_once_per_cluster():
     signals = {
         "AAPL": signal("AAPL", unusual=True, zscore=3.0),
@@ -289,7 +314,7 @@ def test_market_and_portfolio_state_round_trip_and_compare():
     assert state.invested_allocation == {"QQQ": 1.0}
     assert state.liquid_asset_allocation_status == "available"
     assert set(state.liquid_asset_allocation) == {"Cash", "QQQ"}
-    assert state.fx_status == "available"
+    assert state.fx_status == "degraded"
     assert compare_report_states(restored, state) == ["No state changes detected."]
 
 
@@ -576,3 +601,18 @@ def test_fx_state_uses_current_spot_and_weighted_all_in_cost_basis():
     assert state.cost_basis == 7.07
     assert round(state.difference_pct or 0, 4) == -0.0424
     assert state.coverage_days == 120.0
+
+
+def test_fx_coverage_is_unavailable_without_daily_requirement():
+    summary = analyze_portfolio_summary(
+        portfolio_state(), ReportProfile(), {}, date(2026, 7, 25)
+    )
+
+    state = analyze_fx_state(
+        portfolio_state(), summary, [bar(date(2026, 7, 25), 6.77)]
+    )
+
+    assert state.coverage_days is None
+    assert state.coverage_status == "unavailable"
+    assert state.status == "degraded"
+    assert "usd_daily_spend_not_configured" in state.reasons
