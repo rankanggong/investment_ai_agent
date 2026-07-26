@@ -67,6 +67,7 @@ def _analyze_factor_exposure(
         if symbol in weights
     }
     mapped_weight = sum(weights[symbol] for symbol in mapped_symbols)
+    unmapped_symbols = tuple(sorted(set(weights) - mapped_symbols))
     reasons: list[str] = []
     if freshness_status != "available":
         reasons.append(f"holding_freshness_{freshness_status}")
@@ -77,6 +78,7 @@ def _analyze_factor_exposure(
         mapped_weight,
         exposures,
         tuple(reasons),
+        unmapped_symbols,
     )
 
 

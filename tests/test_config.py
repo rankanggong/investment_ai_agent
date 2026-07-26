@@ -106,6 +106,23 @@ def test_load_report_profile_rejects_unknown_strategy_metric(tmp_path):
         load_report_profile(path)
 
 
+def test_load_report_profile_rejects_permission_for_unknown_rule(tmp_path):
+    path = tmp_path / "report-profile.json"
+    path.write_text(
+        json.dumps(
+            {
+                "rule_execution_permissions": [
+                    {"rule_id": "missing", "status": "allowed"}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unknown rules"):
+        load_report_profile(path)
+
+
 def test_load_report_profile_reads_structured_target_budget_and_action_sizing(
     tmp_path,
 ):
@@ -130,6 +147,24 @@ def test_load_report_profile_reads_structured_target_budget_and_action_sizing(
                         "action": "manual_add_level_1",
                         "method": "daily_budget_fraction",
                         "budget_fraction": 0.5,
+                    }
+                ],
+                "strategy_rules": [
+                    {
+                        "id": "qqq_level_1",
+                        "symbol": "QQQ",
+                        "action": "manual_add_level_1",
+                        "priority": 10,
+                        "conditions": [],
+                    }
+                ],
+                "rule_execution_permissions": [
+                    {
+                        "rule_id": "qqq_level_1",
+                        "status": "allowed",
+                        "valid_from": "2026-07-01",
+                        "valid_through": "2026-12-31",
+                        "maximum_amount": 300,
                     }
                 ],
                 "portfolio_factors": [
@@ -161,6 +196,8 @@ def test_load_report_profile_reads_structured_target_budget_and_action_sizing(
     assert profile.daily_investment_budget == 1000
     assert profile.daily_budget.maximum_action_amount == 600
     assert profile.action_sizing[0].budget_fraction == 0.5
+    assert profile.rule_execution_permissions[0].status == "allowed"
+    assert profile.rule_execution_permissions[0].maximum_amount == 300
     assert profile.portfolio_factors[0].symbols == ("QQQ", "VOO")
     assert profile.portfolio_factors[0].risk_components == (
         "breadth", "volatility"

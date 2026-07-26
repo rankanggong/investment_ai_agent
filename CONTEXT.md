@@ -158,6 +158,11 @@ A user-supplied mapping from a Decision Candidate action to a deterministic
 fraction of the Daily Investment Budget.
 _Avoid_: Strategy condition, order instruction
 
+**Rule Execution Permission**:
+A user-supplied, default-deny permission that allows one named Strategy Rule to
+advance from Decision Candidate to action sizing during an optional validity period.
+_Avoid_: Human approval, broker authorization, automatic execution
+
 **Portfolio Exposure Risk**:
 A score derived only from supplied investment-state facts such as allocation
 gaps, invested-sleeve concentration, and investment-cash coverage.
@@ -206,9 +211,9 @@ approval.
 _Avoid_: Order, recommendation, automatic execution
 
 **Execution Readiness**:
-Whether a Decision Candidate has a configured Daily Investment Budget and
-Action Sizing Policy, together with its deterministic proposed amount. It never
-authorizes an order and always requires human approval.
+Whether a Decision Candidate satisfies Rule Execution Permission, action sizing,
+funding, target, and factor-mapping constraints. It never authorizes an order
+and always requires human approval.
 _Avoid_: Execution authorization, order
 
 **Decision State History**:

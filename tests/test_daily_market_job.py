@@ -153,12 +153,15 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     assert "Status: degraded" in content
     assert "- Weighted all-in cost basis: 6.79" in content
     assert "- Reason: usd_cnh_spot_unavailable" in content
-    assert "Action Readiness: blocked" in content
+    assert "Action Readiness: ready" in content
+    assert "Execution Readiness: blocked" in content
+    assert "rule_execution_permission_not_configured" in content
     assert "### Portfolio Factor Exposure and Market Impact" in content
     assert "| us_equity | 100.00% | VOO |" in content
     assert "Portfolio impact status: blocked" in content
     assert "- Impact reason: market_analysis_not_available" in content
-    assert '"action_readiness_status": "blocked"' in content
+    assert '"action_readiness_status": "ready"' in content
+    assert '"rule_execution_permission_status": "missing"' in content
     assert '"portfolio_factor_exposures": {"us_equity": 1.0}' in content
     assert "Valuation status: available" in content
     assert "Earnings revision status: available" in content
@@ -174,4 +177,4 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     decisions = ReportRepository(finance_db).list_decision_states()
     assert len(decisions) == 1
     assert decisions[0].report_date == date(2026, 7, 21)
-    assert decisions[0].readiness_status == "blocked"
+    assert decisions[0].readiness_status == "ready"

@@ -1,19 +1,38 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date
+
 from app.models.analysis import (
     ActionReadiness,
     ExecutionReadiness,
     MacroContext,
     MarketBreadth,
     PriceSignal,
-    ReportUseStates,
     StrategyCondition,
     StrategyConditionResult,
     StrategyDecisionState,
     StrategyRuleDefinition,
     StrategyRuleResult,
 )
-from app.config import ActionSizingPolicy, DailyBudgetPolicy
+from app.config import (
+    ActionSizingPolicy,
+    DailyBudgetPolicy,
+    RuleExecutionPermission,
+)
+
+
+@dataclass(frozen=True)
+class StrategyExecutionContext:
+    report_date: date
+    daily_budget: DailyBudgetPolicy | None
+    action_sizing: tuple[ActionSizingPolicy, ...]
+    permissions: tuple[RuleExecutionPermission, ...]
+    available_investment_cash: float | None
+    cash_currency: str | None
+    investment_action_status: str = "blocked"
+    investment_action_reasons: tuple[str, ...] = ()
+    factor_mapping_status: str = "blocked"
 
 
 def evaluate_strategy_decision(
@@ -21,10 +40,8 @@ def evaluate_strategy_decision(
     price_signals: dict[str, PriceSignal],
     macro_context: MacroContext | None,
     market_breadth: MarketBreadth,
-    use_states: ReportUseStates,
     fundamental_flags: dict[str, bool] | None = None,
-    daily_budget: DailyBudgetPolicy | None = None,
-    action_sizing: tuple[ActionSizingPolicy, ...] = (),
+    execution_context: StrategyExecutionContext | None = None,
 ) -> StrategyDecisionState:
     """Evaluate configured rules and derive one deterministic action state."""
     flags = fundamental_flags or {}
@@ -38,45 +55,83 @@ def evaluate_strategy_decision(
         )
         for definition in definitions
     )
-    readiness = _derive_action_readiness(results, use_states)
+    readiness = _derive_action_readiness(results)
     execution = _derive_execution_readiness(
-        readiness, daily_budget, action_sizing
+        readiness, execution_context
     )
     return StrategyDecisionState(results, readiness, execution)
 
 
 def _derive_execution_readiness(
     readiness: ActionReadiness,
-    daily_budget: DailyBudgetPolicy | None,
-    action_sizing: tuple[ActionSizingPolicy, ...],
+    context: StrategyExecutionContext | None,
 ) -> ExecutionReadiness:
     if readiness.status != "ready" or readiness.candidate_action is None:
         return ExecutionReadiness(
             "blocked", None, None, None,
             ("decision_candidate_not_ready", "human_approval_required"),
         )
+    if context is None:
+        return ExecutionReadiness(
+            "blocked", None, None, None,
+            ("execution_context_not_supplied", "human_approval_required"),
+        )
+    permission = next(
+        (
+            item for item in context.permissions
+            if item.rule_id == readiness.rule_id
+        ),
+        None,
+    )
     policy = next(
         (
-            item for item in action_sizing
+            item for item in context.action_sizing
             if item.action == readiness.candidate_action
         ),
         None,
     )
     reasons: list[str] = []
+    permission_reason = _permission_block_reason(permission, context.report_date)
+    if permission_reason:
+        reasons.append(permission_reason)
     if policy is None:
         reasons.append("action_sizing_policy_not_configured")
+    if policy is not None and policy.method == "no_amount" and not reasons:
+        return ExecutionReadiness(
+            "awaiting_human_approval", None, None, policy.method,
+            ("human_approval_required",),
+            permission_status="allowed",
+        )
+    if context.investment_action_status != "available":
+        reasons.extend(
+            context.investment_action_reasons
+            or ("investment_action_capability_not_available",)
+        )
+    if context.factor_mapping_status != "available":
+        reasons.append("factor_mapping_not_complete")
+    daily_budget = context.daily_budget
     if daily_budget is None or daily_budget.amount is None:
         reasons.append("daily_budget_not_configured")
+    elif daily_budget.amount <= 0:
+        reasons.append("daily_budget_not_positive")
+    if context.available_investment_cash is None:
+        reasons.append("investment_cash_unavailable")
+    elif daily_budget is not None and context.cash_currency != daily_budget.currency:
+        reasons.append("investment_cash_budget_currency_mismatch")
     if reasons:
         return ExecutionReadiness(
             "blocked", None,
             daily_budget.currency if daily_budget else None,
             policy.method if policy else None,
             tuple([*reasons, "human_approval_required"]),
+            permission_status=(permission.status if permission else "missing"),
         )
     amount = daily_budget.amount * (policy.budget_fraction or 0)
     if daily_budget.maximum_action_amount is not None:
         amount = min(amount, daily_budget.maximum_action_amount)
+    if permission and permission.maximum_amount is not None:
+        amount = min(amount, permission.maximum_amount)
+    amount = min(amount, context.available_investment_cash or 0)
     if (
         daily_budget.minimum_action_amount is not None
         and amount < daily_budget.minimum_action_amount
@@ -84,6 +139,7 @@ def _derive_execution_readiness(
         return ExecutionReadiness(
             "blocked", amount, daily_budget.currency, policy.method,
             ("proposed_amount_below_minimum", "human_approval_required"),
+            permission_status="allowed",
         )
     return ExecutionReadiness(
         "awaiting_human_approval",
@@ -91,7 +147,23 @@ def _derive_execution_readiness(
         daily_budget.currency,
         policy.method,
         ("human_approval_required",),
+        permission_status="allowed",
     )
+
+
+def _permission_block_reason(
+    permission: RuleExecutionPermission | None,
+    report_date: date,
+) -> str:
+    if permission is None:
+        return "rule_execution_permission_not_configured"
+    if permission.status != "allowed":
+        return "rule_execution_permission_denied"
+    if permission.valid_from and report_date < permission.valid_from:
+        return "rule_execution_permission_not_yet_valid"
+    if permission.valid_through and report_date > permission.valid_through:
+        return "rule_execution_permission_expired"
+    return ""
 
 
 def _evaluate_rule(
@@ -254,26 +326,7 @@ def _resolve_metric(
 
 def _derive_action_readiness(
     results: tuple[StrategyRuleResult, ...],
-    use_states: ReportUseStates,
 ) -> ActionReadiness:
-    capability = (
-        use_states.data_quality.capabilities.investment_action
-        if use_states.data_quality is not None
-        else None
-    )
-    action_available = (
-        capability.status == "available"
-        if capability is not None
-        else use_states.portfolio.actionability == "available"
-    )
-    if not action_available:
-        reasons = (
-            capability.reasons
-            if capability is not None and capability.reasons
-            else (use_states.portfolio.reason,)
-        )
-        return ActionReadiness("blocked", None, None, None, tuple(reasons))
-
     enabled = tuple(result for result in results if result.status != "disabled")
     if not enabled:
         return ActionReadiness(

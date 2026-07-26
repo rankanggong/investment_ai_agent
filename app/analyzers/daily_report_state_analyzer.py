@@ -643,6 +643,17 @@ def build_report_use_states(
     action_reasons = list(portfolio_reasons)
     if profile is not None and not profile.target_allocations:
         action_reasons.append("target allocations are not configured")
+    if profile is not None and profile.target_allocations:
+        unmapped_target_symbols = sorted(
+            item.symbol
+            for item in portfolio_summary.allocations
+            if (item.current_weight or 0) > 0 and item.target_weight is None
+        )
+        if unmapped_target_symbols:
+            action_reasons.append(
+                "target allocations do not cover current holdings: "
+                + ", ".join(unmapped_target_symbols)
+            )
     if (
         profile is not None
         and profile.target_allocations
@@ -1080,6 +1091,11 @@ def build_report_state(
             if strategy_decision is not None
             else "blocked"
         ),
+        rule_execution_permission_status=(
+            strategy_decision.execution_readiness.permission_status
+            if strategy_decision is not None
+            else "denied"
+        ),
         proposed_action_amount=(
             strategy_decision.execution_readiness.proposed_amount
             if strategy_decision is not None
@@ -1274,6 +1290,9 @@ def extract_report_state(content: str | None) -> ReportState | None:
             execution_readiness_status=data.get(
                 "execution_readiness_status", "blocked"
             ),
+            rule_execution_permission_status=data.get(
+                "rule_execution_permission_status", "denied"
+            ),
             proposed_action_amount=data.get("proposed_action_amount"),
             proposed_action_currency=data.get("proposed_action_currency"),
             portfolio_factor_exposures=dict(
@@ -1348,6 +1367,7 @@ def compare_report_states(
         "candidate_symbol": "Decision candidate symbol",
         "candidate_rule_id": "Decision candidate rule",
         "execution_readiness_status": "Execution readiness",
+        "rule_execution_permission_status": "Rule execution permission",
         "proposed_action_amount": "Proposed action amount",
         "proposed_action_currency": "Proposed action currency",
         "portfolio_factor_exposures": "Portfolio factor exposures",

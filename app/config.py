@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import date
 import json
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,15 @@ class ActionSizingPolicy:
 
 
 @dataclass(frozen=True)
+class RuleExecutionPermission:
+    rule_id: str
+    status: str
+    valid_from: date | None = None
+    valid_through: date | None = None
+    maximum_amount: float | None = None
+
+
+@dataclass(frozen=True)
 class PortfolioFactorDefinition:
     factor_id: str
     symbols: tuple[str, ...]
@@ -69,6 +79,7 @@ class ReportProfile:
     target_allocation: TargetAllocationPolicy | None = None
     daily_budget: DailyBudgetPolicy | None = None
     action_sizing: tuple[ActionSizingPolicy, ...] = ()
+    rule_execution_permissions: tuple[RuleExecutionPermission, ...] = ()
     portfolio_factors: tuple[PortfolioFactorDefinition, ...] = ()
     fundamental_policy: FundamentalPolicy = field(
         default_factory=FundamentalPolicy
@@ -102,14 +113,40 @@ def load_report_profile(path: Path | None) -> ReportProfile:
     data = json.loads(path.read_text(encoding="utf-8"))
     target_policy = _load_target_allocation(data)
     budget_policy = _load_daily_budget(data)
+    strategy_rules = _load_strategy_rules(data.get("strategy_rules", []))
+    action_sizing = _load_action_sizing(data.get("action_sizing", []))
+    permissions = _load_rule_execution_permissions(
+        data.get("rule_execution_permissions", [])
+    )
+    rule_ids = {rule.rule_id for rule in strategy_rules}
+    unknown_permissions = {
+        permission.rule_id for permission in permissions
+        if permission.rule_id not in rule_ids
+    }
+    if unknown_permissions:
+        raise ValueError(
+            "rule execution permissions reference unknown rules: "
+            + ", ".join(sorted(unknown_permissions))
+        )
+    rule_actions = {rule.action for rule in strategy_rules}
+    unknown_actions = {
+        policy.action for policy in action_sizing
+        if policy.action not in rule_actions
+    }
+    if unknown_actions:
+        raise ValueError(
+            "action sizing references unknown actions: "
+            + ", ".join(sorted(unknown_actions))
+        )
     return ReportProfile(
         base_currency=str(data.get("base_currency", "CNY")).upper(),
         usd_daily_spend=_optional_float(data.get("usd_daily_spend")),
         gpt_questions=[str(question) for question in data.get("gpt_questions", [])],
-        strategy_rules=_load_strategy_rules(data.get("strategy_rules", [])),
+        strategy_rules=strategy_rules,
         target_allocation=target_policy,
         daily_budget=budget_policy,
-        action_sizing=_load_action_sizing(data.get("action_sizing", [])),
+        action_sizing=action_sizing,
+        rule_execution_permissions=permissions,
         portfolio_factors=_load_portfolio_factors(
             data.get("portfolio_factors", [])
         ),
@@ -176,16 +213,57 @@ def _load_action_sizing(raw_items: Any) -> tuple[ActionSizingPolicy, ...]:
             raise ValueError("each action sizing policy must be an object")
         action = str(raw.get("action", "")).strip()
         method = str(raw.get("method", "")).strip()
-        if not action or method != "daily_budget_fraction":
-            raise ValueError("action sizing requires an action and daily_budget_fraction method")
+        if not action or method not in {"daily_budget_fraction", "no_amount"}:
+            raise ValueError(
+                "action sizing requires an action and a supported method"
+            )
         if action in seen:
             raise ValueError(f"duplicate action sizing policy: {action}")
         seen.add(action)
         fraction = _optional_float(raw.get("budget_fraction"))
-        if fraction is None or not 0 < fraction <= 1:
+        if method == "daily_budget_fraction" and (
+            fraction is None or not 0 < fraction <= 1
+        ):
             raise ValueError("action sizing budget_fraction must be above 0 and at most 1")
+        if method == "no_amount" and fraction is not None:
+            raise ValueError("no_amount action sizing cannot define budget_fraction")
         policies.append(ActionSizingPolicy(action, method, fraction))
     return tuple(policies)
+
+
+def _load_rule_execution_permissions(
+    raw_items: Any,
+) -> tuple[RuleExecutionPermission, ...]:
+    if not isinstance(raw_items, list):
+        raise ValueError("rule_execution_permissions must be a list")
+    permissions: list[RuleExecutionPermission] = []
+    seen: set[str] = set()
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            raise ValueError("each rule execution permission must be an object")
+        rule_id = str(raw.get("rule_id", "")).strip()
+        status = str(raw.get("status", "denied")).strip()
+        if not rule_id or status not in {"allowed", "denied"}:
+            raise ValueError("rule execution permission requires rule_id and allowed/denied status")
+        if rule_id in seen:
+            raise ValueError(f"duplicate rule execution permission: {rule_id}")
+        seen.add(rule_id)
+        valid_from = _optional_date(raw.get("valid_from"))
+        valid_through = _optional_date(raw.get("valid_through"))
+        if valid_from and valid_through and valid_from > valid_through:
+            raise ValueError("rule execution permission valid_from exceeds valid_through")
+        permissions.append(
+            RuleExecutionPermission(
+                rule_id,
+                status,
+                valid_from,
+                valid_through,
+                _optional_non_negative(
+                    raw.get("maximum_amount"), "permission maximum amount"
+                ),
+            )
+        )
+    return tuple(permissions)
 
 
 def _load_portfolio_factors(
@@ -336,6 +414,12 @@ def _optional_positive_int(value: Any, label: str) -> int | None:
     if parsed <= 0:
         raise ValueError(f"{label} must be positive")
     return parsed
+
+
+def _optional_date(value: Any) -> date | None:
+    if value in {None, ""}:
+        return None
+    return date.fromisoformat(str(value))
 
 
 def load_watchlist(path: Path) -> Watchlist:

@@ -301,6 +301,8 @@ def _render_executive_states(
         "",
         f"[STATE:EXECUTION] Execution readiness is "
         f"{execution.status if execution is not None else 'blocked'}; "
+        f"rule permission is "
+        f"{execution.permission_status if execution is not None else 'denied'}; "
         f"proposed amount is "
         f"{_format_money(execution.proposed_amount, execution.currency or '') if execution else 'N/A'}; "
         "no execution is authorized.",
@@ -615,6 +617,8 @@ def _render_portfolio_impact(
     lines = [
         f"Factor exposure status: {analysis.factors.status}",
         f"- Mapped invested weight: {_format_percent(analysis.factors.mapped_weight)}",
+        "- Unmapped invested symbols: "
+        + (", ".join(analysis.factors.unmapped_symbols) or "none"),
     ]
     lines.extend(f"- Factor reason: {reason}" for reason in analysis.factors.reasons)
     lines.extend([
@@ -734,6 +738,7 @@ def _render_action_readiness(
         "Evidence Ref: STATE:EXECUTION_READINESS",
         "",
         f"Execution Readiness: {execution.status}",
+        f"- Rule execution permission: {execution.permission_status}",
         f"- Proposed amount: {_format_money(execution.proposed_amount, execution.currency or '')}",
         f"- Sizing method: {execution.sizing_method or 'N/A'}",
         "- Execution authorized: no.",

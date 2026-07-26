@@ -18,7 +18,11 @@ from app.analyzers.daily_report_state_analyzer import (
     select_key_market_evidence,
     serialize_report_state,
 )
-from app.config import ReportProfile
+from app.config import (
+    DailyBudgetPolicy,
+    ReportProfile,
+    TargetAllocationPolicy,
+)
 from app.models.analysis import (
     DataCoverage,
     DataCoverageRow,
@@ -616,6 +620,42 @@ def test_portfolio_summary_exposes_invested_and_liquid_allocation_views():
     }
     assert round(liquid_weights["QQQ"] or 0, 4) == 0.0694
     assert round(liquid_weights["Cash"] or 0, 4) == 0.9306
+
+
+def test_investment_action_blocks_when_targets_do_not_cover_current_holdings():
+    profile = ReportProfile(
+        target_allocation=TargetAllocationPolicy(
+            weights={"VOO": 1.0}, tolerance=0.03
+        ),
+        daily_budget=DailyBudgetPolicy(500, "CNY"),
+    )
+    summary = analyze_portfolio_summary(
+        portfolio_state(),
+        profile,
+        {"USD/CNH": signal("USD/CNH", latest=7.0)},
+        date(2026, 7, 25),
+    )
+    risk = assess_portfolio_decision_risk(summary)
+    states = build_report_use_states(
+        assess_market_risk(
+            {"SPY": signal("SPY")},
+            analyze_market_breadth({"SPY": signal("SPY")}, {}),
+        ),
+        MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
+        type(
+            "Rotation",
+            (),
+            {"strong_sectors": [], "weak_sectors": [], "risk_on_score": 0.0},
+        )(),
+        DataCoverage([], [], status="available"),
+        summary,
+        risk,
+        None,
+        profile,
+    )
+
+    assert states.portfolio.actionability == "blocked"
+    assert "QQQ" in states.portfolio.reason
 
 
 def test_liquid_allocation_is_unavailable_for_unknown_cash_role():

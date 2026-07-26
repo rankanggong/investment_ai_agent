@@ -13,6 +13,7 @@
   },
   "usd_daily_spend": null,
   "action_sizing": [],
+  "rule_execution_permissions": [],
   "portfolio_factors": [
     {
       "id": "us_equity",
@@ -28,7 +29,7 @@
     },
     {
       "id": "gold",
-      "symbols": ["GLD"],
+      "symbols": ["GLD", "XAU-GRAM"],
       "risk_components": [],
       "risk_clusters": ["gold"]
     },

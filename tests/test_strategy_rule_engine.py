@@ -1,18 +1,18 @@
 from datetime import date
 
-from app.analyzers.strategy_rule_engine import evaluate_strategy_decision
-from app.config import ActionSizingPolicy, DailyBudgetPolicy
+from app.analyzers.strategy_rule_engine import (
+    StrategyExecutionContext,
+    evaluate_strategy_decision,
+)
+from app.config import (
+    ActionSizingPolicy,
+    DailyBudgetPolicy,
+    RuleExecutionPermission,
+)
 from app.models.analysis import (
-    CapabilityState,
-    DataQualityState,
     MacroContext,
     MarketBreadth,
-    MarketState,
-    NewsState,
-    PortfolioDecisionState,
     PriceSignal,
-    ReportCapabilities,
-    ReportUseStates,
     StrategyCondition,
     StrategyRuleDefinition,
 )
@@ -38,28 +38,33 @@ def breadth(vix_percentile: float | None = 0.9) -> MarketBreadth:
     return MarketBreadth(0, 0, 0, None, None, None, 20.0, vix_percentile)
 
 
-def use_states(action_status: str = "available") -> ReportUseStates:
-    capability = CapabilityState(
-        action_status,
-        () if action_status == "available" else ("target allocation missing",),
-    )
-    return ReportUseStates(
-        market=MarketState("low", "mixed", "available", "Available."),
-        portfolio=PortfolioDecisionState(
-            "low", "ready", action_status, "Portfolio inputs evaluated."
+def execution_context(
+    *,
+    permission_status: str = "allowed",
+    investment_action_status: str = "available",
+    factor_mapping_status: str = "available",
+    maximum_permission_amount: float | None = None,
+) -> StrategyExecutionContext:
+    return StrategyExecutionContext(
+        report_date=date(2026, 7, 25),
+        daily_budget=DailyBudgetPolicy(1000, "CNY", 100, 400),
+        action_sizing=(
+            ActionSizingPolicy("base_investment", "daily_budget_fraction", 0.5),
         ),
-        news=NewsState("available", "available", "Available."),
-        data_quality=DataQualityState(
-            CapabilityState("available"),
-            ReportCapabilities(
-                CapabilityState("available"),
-                CapabilityState("available"),
-                CapabilityState("available"),
-                capability,
-                CapabilityState("available"),
-                CapabilityState("available"),
+        permissions=(
+            RuleExecutionPermission(
+                "base", permission_status,
+                maximum_amount=maximum_permission_amount,
             ),
         ),
+        available_investment_cash=1000,
+        cash_currency="CNY",
+        investment_action_status=investment_action_status,
+        investment_action_reasons=(
+            () if investment_action_status == "available"
+            else ("target allocation missing",)
+        ),
+        factor_mapping_status=factor_mapping_status,
     )
 
 
@@ -93,8 +98,7 @@ def test_strategy_engine_selects_highest_priority_triggered_action():
         {"QQQ": signal("QQQ", -0.15)},
         MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
         breadth(),
-        use_states(),
-        {"QQQ.earnings_revision_negative": False},
+        fundamental_flags={"QQQ.earnings_revision_negative": False},
     )
 
     assert [rule.status for rule in result.rules] == ["waiting", "triggered"]
@@ -130,7 +134,6 @@ def test_strategy_engine_blocks_when_safety_rule_data_is_missing():
         {"QQQ": signal("QQQ", -0.02)},
         MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
         breadth(),
-        use_states(),
     )
 
     assert result.rules[0].status == "blocked"
@@ -160,14 +163,13 @@ def test_strategy_engine_waits_when_conditions_are_not_met():
         {"QQQ": signal("QQQ", -0.02)},
         MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
         breadth(),
-        use_states(),
     )
 
     assert result.rules[0].status == "waiting"
     assert result.action_readiness.status == "waiting_for_condition"
 
 
-def test_strategy_engine_respects_investment_action_capability_gate():
+def test_execution_respects_investment_action_capability_gate():
     result = evaluate_strategy_decision(
         (
             StrategyRuleDefinition(
@@ -177,12 +179,13 @@ def test_strategy_engine_respects_investment_action_capability_gate():
         {"QQQ": signal("QQQ", -0.02)},
         MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
         breadth(),
-        use_states("blocked"),
+        execution_context=execution_context(investment_action_status="blocked"),
     )
 
     assert result.rules[0].status == "triggered"
-    assert result.action_readiness.status == "blocked"
-    assert result.action_readiness.reasons == ("target allocation missing",)
+    assert result.action_readiness.status == "ready"
+    assert result.execution_readiness.status == "blocked"
+    assert "target allocation missing" in result.execution_readiness.reasons
 
 
 def test_execution_sizing_is_separate_from_triggered_rule_conditions():
@@ -195,13 +198,7 @@ def test_execution_sizing_is_separate_from_triggered_rule_conditions():
         {"QQQ": signal("QQQ", -0.02)},
         MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
         breadth(),
-        use_states(),
-        daily_budget=DailyBudgetPolicy(1000, "CNY", 100, 400),
-        action_sizing=(
-            ActionSizingPolicy(
-                "base_investment", "daily_budget_fraction", 0.5
-            ),
-        ),
+        execution_context=execution_context(),
     )
 
     assert result.action_readiness.status == "ready"
@@ -220,10 +217,81 @@ def test_execution_sizing_blocks_without_policy_but_keeps_candidate():
         {"QQQ": signal("QQQ", -0.02)},
         MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
         breadth(),
-        use_states(),
-        daily_budget=DailyBudgetPolicy(1000, "CNY"),
+        execution_context=StrategyExecutionContext(
+            date(2026, 7, 25),
+            DailyBudgetPolicy(1000, "CNY"),
+            (),
+            (RuleExecutionPermission("base", "allowed"),),
+            1000,
+            "CNY",
+            "available",
+            (),
+            "available",
+        ),
     )
 
     assert result.action_readiness.candidate_action == "base_investment"
     assert result.execution_readiness.status == "blocked"
     assert "action_sizing_policy_not_configured" in result.execution_readiness.reasons
+
+
+def test_execution_permission_is_default_deny_and_caps_allowed_amount():
+    definition = (
+        StrategyRuleDefinition(
+            "base", "QQQ", "base_investment", 10, True, False
+        ),
+    )
+    missing = evaluate_strategy_decision(
+        definition,
+        {"QQQ": signal("QQQ", -0.02)},
+        MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
+        breadth(),
+        execution_context=StrategyExecutionContext(
+            date(2026, 7, 25),
+            DailyBudgetPolicy(1000, "CNY"),
+            (ActionSizingPolicy("base_investment", "daily_budget_fraction", 0.5),),
+            (),
+            1000,
+            "CNY",
+            "available",
+            (),
+            "available",
+        ),
+    )
+    capped = evaluate_strategy_decision(
+        definition,
+        {"QQQ": signal("QQQ", -0.02)},
+        MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
+        breadth(),
+        execution_context=execution_context(maximum_permission_amount=250),
+    )
+
+    assert missing.action_readiness.status == "ready"
+    assert "rule_execution_permission_not_configured" in missing.execution_readiness.reasons
+    assert missing.execution_readiness.permission_status == "missing"
+    assert capped.execution_readiness.proposed_amount == 250
+    assert capped.execution_readiness.permission_status == "allowed"
+
+
+def test_no_amount_safety_action_needs_permission_but_not_budget_or_targets():
+    result = evaluate_strategy_decision(
+        (StrategyRuleDefinition("pause", "QQQ", "pause", 100, True, True),),
+        {"QQQ": signal("QQQ", -0.02)},
+        MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
+        breadth(),
+        execution_context=StrategyExecutionContext(
+            date(2026, 7, 25),
+            None,
+            (ActionSizingPolicy("pause", "no_amount"),),
+            (RuleExecutionPermission("pause", "allowed"),),
+            None,
+            None,
+            "blocked",
+            ("target allocations are not configured",),
+            "blocked",
+        ),
+    )
+
+    assert result.action_readiness.candidate_action == "pause"
+    assert result.execution_readiness.status == "awaiting_human_approval"
+    assert result.execution_readiness.proposed_amount is None

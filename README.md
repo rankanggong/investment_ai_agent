@@ -43,8 +43,8 @@ conversions from the steward database. Its main body is a compact market-state
 view; full account detail is kept in the appendix. Use `--steward-db` to select
 a non-default steward database.
 
-Report-specific portfolio targets, daily investment budget, action sizing, USD
-daily spend, and standing GPT questions are configured in
+Report-specific portfolio targets, daily investment budget, action sizing,
+default-deny rule execution permissions, USD daily spend, and standing GPT questions are configured in
 `config/report_profile.json`. Target weights must sum to `1.0`; the target
 policy also states the comparison basis and tolerance. The daily budget states
 its currency and optional per-action bounds. Unconfigured values remain `N/A`;
@@ -175,8 +175,10 @@ may explain the computed result but does not create or alter rules.
 Rule evaluation and action sizing are separate. A triggered rule produces a
 Decision Candidate. A matching `action_sizing` entry can then calculate a
 proposed amount as a configured fraction of the Daily Investment Budget,
-subject to its optional minimum and maximum. The result always awaits human
-approval and never authorizes or executes an order.
+subject to its optional minimum and maximum. A matching, currently valid
+`rule_execution_permissions` entry with `status: allowed` is also required;
+missing permission means denied. The result always awaits human approval and
+never authorizes or executes an order.
 
 ## Amazon Bedrock
 

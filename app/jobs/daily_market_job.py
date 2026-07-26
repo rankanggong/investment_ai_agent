@@ -29,7 +29,10 @@ from app.analyzers.price_move_analyzer import analyze_price_moves
 from app.analyzers.portfolio_impact_analyzer import analyze_portfolio_impact
 from app.analyzers.report_signal_analyzer import analyze_report_signals
 from app.analyzers.sector_rotation_analyzer import analyze_sector_rotation
-from app.analyzers.strategy_rule_engine import evaluate_strategy_decision
+from app.analyzers.strategy_rule_engine import (
+    StrategyExecutionContext,
+    evaluate_strategy_decision,
+)
 from app.config import load_report_profile, load_watchlist
 from app.models.analysis import AssetEntity
 from app.outputs.markdown_writer import render_daily_report, write_daily_report
@@ -184,10 +187,26 @@ def generate_daily_report(
         signals,
         macro_context,
         market_breadth,
-        use_states,
         fundamental_flags=fundamental_state.fundamental_flags,
-        daily_budget=report_profile.daily_budget,
-        action_sizing=report_profile.action_sizing,
+        execution_context=StrategyExecutionContext(
+            effective_date,
+            report_profile.daily_budget,
+            report_profile.action_sizing,
+            report_profile.rule_execution_permissions,
+            portfolio_summary.investment_cash,
+            portfolio_summary.base_currency,
+            (
+                use_states.data_quality.capabilities.investment_action.status
+                if use_states.data_quality is not None
+                else use_states.portfolio.actionability
+            ),
+            (
+                use_states.data_quality.capabilities.investment_action.reasons
+                if use_states.data_quality is not None
+                else (use_states.portfolio.reason,)
+            ),
+            portfolio_impact.factors.status,
+        ),
     )
     strategy_rules = [*strategy_decision.rules, *monitoring_rules]
     report_state = build_report_state(

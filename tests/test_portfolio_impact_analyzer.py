@@ -79,6 +79,7 @@ def test_incomplete_factor_mapping_blocks_portfolio_impact():
 
     assert result.factors.status == "degraded"
     assert result.factors.mapped_weight == 0.6
+    assert result.factors.unmapped_symbols == ("OTHER",)
     assert result.impact.status == "blocked"
     assert result.impact.reasons == ("portfolio_factor_mapping_incomplete",)
 

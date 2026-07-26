@@ -269,6 +269,7 @@ class PortfolioFactorState:
     mapped_weight: float | None
     exposures: tuple[PortfolioFactorExposure, ...]
     reasons: tuple[str, ...] = ()
+    unmapped_symbols: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -428,6 +429,7 @@ class ExecutionReadiness:
     sizing_method: str | None
     reasons: tuple[str, ...]
     human_approval_required: bool = True
+    permission_status: str = "denied"
 
 
 @dataclass(frozen=True)
@@ -649,6 +651,7 @@ class ReportState:
     candidate_symbol: str | None = None
     candidate_rule_id: str | None = None
     execution_readiness_status: str = "blocked"
+    rule_execution_permission_status: str = "denied"
     proposed_action_amount: float | None = None
     proposed_action_currency: str | None = None
     portfolio_factor_exposures: dict[str, float | None] = field(
