@@ -4,7 +4,7 @@ from pathlib import Path
 from app.analyzers.company_price_bounds_analyzer import analyze_company_price_bounds
 from app.analyzers.data_coverage_analyzer import analyze_data_coverage
 from app.analyzers.daily_report_state_analyzer import (
-    analyze_fx_costs,
+    analyze_fx_state,
     analyze_market_breadth,
     analyze_portfolio_summary,
     assess_market_risk,
@@ -121,7 +121,11 @@ def generate_daily_report(
         market_breadth,
     )
     portfolio_decision_risk = assess_portfolio_decision_risk(portfolio_summary)
-    fx_costs = analyze_fx_costs(portfolio_state, history.get("USD/CNH", []))
+    fx_state = analyze_fx_state(
+        portfolio_state,
+        portfolio_summary,
+        history.get("USD/CNH", []),
+    )
     use_states = build_report_use_states(
         market_risk,
         macro_context,
@@ -131,7 +135,7 @@ def generate_daily_report(
         portfolio_decision_risk,
         news_quality,
         report_profile,
-        fx_costs,
+        fx_state,
     )
     strategy_rules = evaluate_strategy_rules(
         signals,
@@ -147,6 +151,7 @@ def generate_daily_report(
         strategy_rules,
         key_evidence,
         portfolio_summary,
+        fx_state,
     )
     report_repo = ReportRepository(db_path)
     previous_state = extract_report_state(
@@ -182,7 +187,8 @@ def generate_daily_report(
         portfolio_decision_risk=portfolio_decision_risk,
         use_states=use_states,
         market_breadth=market_breadth,
-        fx_costs=fx_costs,
+        fx_costs=list(fx_state.comparisons),
+        fx_state=fx_state,
         key_evidence=key_evidence,
         strategy_rules=strategy_rules,
         changes=changes,

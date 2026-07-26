@@ -18,15 +18,15 @@ def _analyze_symbol(symbol: str, bars: list[PriceBar]) -> PriceSignal:
     return_5d = _return_over(bars, 5)
     return_20d = _return_over(bars, 20)
     volume_ratio = _volume_ratio_20d(bars)
-    return_zscore = _return_zscore_60d(bars)
+    absolute_move_z_score = _absolute_move_z_score_60d(bars)
     atr_20 = _atr_20(bars)
     atr_multiple = _atr_multiple(bars, atr_20)
-    historical_percentile = _historical_percentile(bars)
+    absolute_move_percentile = _absolute_move_percentile_252d(bars)
     is_unusual, reason = _unusual_move_reason(
         volume_ratio,
-        return_zscore,
+        absolute_move_z_score,
         atr_multiple,
-        historical_percentile,
+        absolute_move_percentile,
     )
     sma_50 = _moving_average(bars, 50)
     sma_200 = _moving_average(bars, 200)
@@ -37,7 +37,7 @@ def _analyze_symbol(symbol: str, bars: list[PriceBar]) -> PriceSignal:
         return_5d=return_5d,
         return_20d=return_20d,
         volume_ratio_20d=volume_ratio,
-        volatility_zscore=return_zscore,
+        volatility_zscore=absolute_move_z_score,
         is_unusual_move=is_unusual,
         reason=reason,
         latest=latest.close,
@@ -46,11 +46,12 @@ def _analyze_symbol(symbol: str, bars: list[PriceBar]) -> PriceSignal:
         sma_200=sma_200,
         distance_to_50d=_distance(latest.close, sma_50),
         distance_to_200d=_distance(latest.close, sma_200),
-        drawdown_from_high=_drawdown_from_high(bars),
+        drawdown_from_high=_drawdown_from_252d_high(bars),
         atr_20=atr_20,
         atr_multiple=atr_multiple,
-        return_zscore_60d=return_zscore,
-        historical_percentile=historical_percentile,
+        return_zscore_60d=absolute_move_z_score,
+        historical_percentile=absolute_move_percentile,
+        sma_50_slope_20d=_moving_average_slope(bars, 50, 20),
     )
 
 
@@ -83,7 +84,7 @@ def _volume_ratio_20d(bars: list[PriceBar]) -> float | None:
     return bars[-1].volume / average_volume
 
 
-def _return_zscore_60d(bars: list[PriceBar]) -> float | None:
+def _absolute_move_z_score_60d(bars: list[PriceBar]) -> float | None:
     returns = _daily_returns(bars[-61:])
     if len(returns) < 2:
         return None
@@ -98,22 +99,23 @@ def _return_zscore_60d(bars: list[PriceBar]) -> float | None:
 
 def _unusual_move_reason(
     volume_ratio: float | None,
-    return_zscore: float | None,
+    absolute_move_z_score: float | None,
     atr_multiple: float | None,
-    historical_percentile: float | None,
+    absolute_move_percentile: float | None,
 ) -> tuple[bool, str]:
     reasons: list[str] = []
-    if return_zscore is not None and return_zscore >= 2.0:
-        reasons.append("return z-score ≥ 2.0")
+    if absolute_move_z_score is not None and absolute_move_z_score >= 2.0:
+        reasons.append("absolute-move z-score ≥ 2.0")
     if atr_multiple is not None and atr_multiple >= 1.5:
         reasons.append("1D move ≥ 1.5 ATR")
-    if historical_percentile is not None and historical_percentile >= 0.95:
-        reasons.append("absolute return ≥ 95th historical percentile")
+    if absolute_move_percentile is not None and absolute_move_percentile >= 0.95:
+        reasons.append("absolute move ≥ 95th 252D percentile")
     if volume_ratio is not None and volume_ratio > 2:
         reasons.append("volume exceeds 2x recent average")
     metrics = (
-        f"z={_metric(return_zscore)}; ATR={_multiple(atr_multiple)}; "
-        f"percentile={_percentile(historical_percentile)}"
+        f"absolute_move_z_score_60d={_metric(absolute_move_z_score)}; "
+        f"ATR={_multiple(atr_multiple)}; "
+        f"absolute_move_percentile_252d={_percentile(absolute_move_percentile)}"
     )
     prefix = "; ".join(reasons) if reasons else "No standardized threshold crossed"
     return bool(reasons), f"{prefix} ({metrics})"
@@ -125,13 +127,29 @@ def _moving_average(bars: list[PriceBar], window: int) -> float | None:
     return mean(bar.close for bar in bars[-window:])
 
 
+def _moving_average_slope(
+    bars: list[PriceBar],
+    window: int,
+    change_window: int,
+) -> float | None:
+    if len(bars) < window + change_window:
+        return None
+    current = mean(bar.close for bar in bars[-window:])
+    previous = mean(
+        bar.close for bar in bars[-window - change_window:-change_window]
+    )
+    if previous == 0:
+        return None
+    return current / previous - 1
+
+
 def _distance(latest: float, average: float | None) -> float | None:
     if average in {None, 0}:
         return None
     return latest / average - 1
 
 
-def _drawdown_from_high(bars: list[PriceBar]) -> float | None:
+def _drawdown_from_252d_high(bars: list[PriceBar]) -> float | None:
     if not bars:
         return None
     high = max(bar.close for bar in bars[-252:])
@@ -163,7 +181,7 @@ def _atr_multiple(bars: list[PriceBar], atr_20: float | None) -> float | None:
     return abs(bars[-1].close - bars[-2].close) / atr_20
 
 
-def _historical_percentile(bars: list[PriceBar]) -> float | None:
+def _absolute_move_percentile_252d(bars: list[PriceBar]) -> float | None:
     returns = _daily_returns(bars[-254:])
     if len(returns) < 20:
         return None

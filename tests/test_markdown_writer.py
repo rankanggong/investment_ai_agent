@@ -220,9 +220,10 @@ def test_report_renders_use_specific_states_and_metric_definitions():
     assert "Portfolio decision readiness is blocked" in content
     assert "[STATE:NEWS] News quality is blocked" in content
     assert "news-based causal analysis is unavailable" in content
-    assert "z-score: latest absolute 1D return" in content
-    assert "Percentile: rank of the latest absolute 1D return" in content
-    assert "Drawdown: latest close divided by the highest close" in content
+    assert "absolute_move_z_score_60d: latest absolute 1D return" in content
+    assert "absolute_move_percentile_252d: rank" in content
+    assert "drawdown_from_252d_high: latest close" in content
+    assert "medium_term_uptrend: close is above both 50DMA and 200DMA" in content
 
 
 def test_key_evidence_separates_structure_from_short_term_and_explains_risk():

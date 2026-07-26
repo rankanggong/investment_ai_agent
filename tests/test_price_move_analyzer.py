@@ -49,6 +49,9 @@ def test_analyze_price_moves_calculates_long_horizon_and_standardized_metrics():
     assert signal.atr_multiple is not None
     assert signal.return_zscore_60d is not None
     assert signal.historical_percentile is not None
-    assert "z-score" in signal.reason
+    assert signal.absolute_move_z_score_60d is not None
+    assert signal.absolute_move_percentile_252d is not None
+    assert signal.sma_50_slope_20d is not None
+    assert "absolute-move z-score" in signal.reason
     assert "ATR" in signal.reason
     assert "percentile" in signal.reason

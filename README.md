@@ -79,12 +79,16 @@ The daily report contains:
 - cost-based portfolio aggregation, configured target gaps, daily budget, and
   USD coverage days;
 - state changes since the previous comparable report;
+- separate invested-sleeve and total-liquid-asset allocation views with explicit
+  cost/balance basis and availability reasons;
 - at most ten key market/macro evidence rows, separating 50D/200D medium-term
   trend from 5-day movement and showing drawdown from the 252-day high;
-- triggered or near-threshold deterministic rules with 60D return-magnitude
-  z-score, 20D ATR multiple, and 252D historical percentile;
+- triggered or near-threshold deterministic rules with 60D absolute-move
+  z-score, 20D ATR multiple, and 252D absolute-move percentile;
 - separate market risk, portfolio exposure risk, and portfolio data-quality
   risk scores, with single-asset alerts distinct from correlated clusters;
+- explicit FX state with USD coverage, latest USD/CNH spot, weighted all-in
+  conversion cost basis, and their percentage difference;
   tracked-universe breadth, VIX, and RSP-versus-SPY evidence;
 - GPT analysis tasks with stable IDs, `ready`/`degraded`/`blocked` status,
   evidence references, and expected-output contracts;

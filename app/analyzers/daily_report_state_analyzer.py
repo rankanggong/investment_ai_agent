@@ -11,6 +11,7 @@ from app.models.analysis import (
     DataCoverageRow,
     DataQualityState,
     FxCostComparison,
+    FxState,
     GptAnalysisTask,
     MarketBreadth,
     MarketEvidence,
@@ -19,6 +20,7 @@ from app.models.analysis import (
     NewsQualityGate,
     NewsState,
     PortfolioAllocation,
+    PortfolioAllocationView,
     PortfolioDecisionState,
     PortfolioRiskAssessment,
     PortfolioSummary,
@@ -69,6 +71,13 @@ def analyze_portfolio_summary(
     report_date: date | None = None,
 ) -> PortfolioSummary:
     if portfolio_state is None:
+        unavailable_view = PortfolioAllocationView(
+            status="unavailable",
+            basis="supplied_holding_cost_plus_cash_balance",
+            total_value=None,
+            allocations=[],
+            reason="portfolio_state_not_supplied",
+        )
         return PortfolioSummary(
             base_currency=profile.base_currency,
             total_holding_cost=None,
@@ -79,17 +88,27 @@ def analyze_portfolio_summary(
             usd_coverage_days=None,
             snapshot_status="unavailable",
             notes=["No portfolio state was supplied."],
+            invested_allocation=PortfolioAllocationView(
+                status="unavailable",
+                basis="supplied_invested_holding_cost",
+                total_value=None,
+                allocations=[],
+                reason="portfolio_state_not_supplied",
+            ),
+            liquid_asset_allocation=unavailable_view,
         )
 
     fx_rates = _fx_rates(portfolio_state, profile.base_currency, price_signals)
     values: dict[str, float] = {}
+    omitted_holdings: list[str] = []
     notes = [
-        "Current Allocation is the share of supplied invested holding cost; "
-        "it is not an allocation of total liquid assets."
+        "Invested Sleeve Allocation is the share of supplied invested holding "
+        "cost; it is not an allocation of total liquid assets."
     ]
     for holding in portfolio_state.holdings:
         rate = fx_rates.get(holding.currency)
         if rate is None:
+            omitted_holdings.append(holding.symbol)
             notes.append(
                 f"{holding.symbol} omitted: no {holding.currency}/"
                 f"{profile.base_currency} conversion rate."
@@ -108,10 +127,15 @@ def analyze_portfolio_summary(
         "emergency": 0.0,
         "unknown": 0.0,
     }
+    missing_cash_fx: list[str] = []
     for position in portfolio_state.cash_positions:
         rate = fx_rates.get(position.currency)
         if rate is not None:
             cash_by_role[position.cash_role] += float(position.balance) * rate
+        else:
+            missing_cash_fx.append(
+                f"{position.institution}/{position.account_label}:{position.currency}"
+            )
 
     usd_cash = sum(
         float(position.balance)
@@ -129,6 +153,52 @@ def analyze_portfolio_summary(
         notes.append("Target allocations are not configured.")
     if cash_by_role["unknown"]:
         notes.append("Unknown-role cash is excluded from investment cash.")
+    invested_view = PortfolioAllocationView(
+        status="degraded" if omitted_holdings else "available",
+        basis="supplied_invested_holding_cost",
+        total_value=total,
+        allocations=allocations,
+        reason=(
+            "holding_fx_conversion_missing"
+            if omitted_holdings
+            else ""
+        ),
+    )
+    liquid_symbols = sorted(
+        {holding.symbol for holding in portfolio_state.holdings} | {"Cash"}
+    )
+    has_unknown_role = any(
+        position.cash_role == "unknown"
+        for position in portfolio_state.cash_positions
+    )
+    liquid_unavailable_reasons: list[str] = []
+    if not portfolio_state.cash_positions:
+        liquid_unavailable_reasons.append("cash_positions_not_supplied")
+    if has_unknown_role:
+        liquid_unavailable_reasons.append("cash_role_not_configured")
+    if omitted_holdings or missing_cash_fx:
+        liquid_unavailable_reasons.append("fx_conversion_missing")
+    if liquid_unavailable_reasons:
+        liquid_view = PortfolioAllocationView(
+            status="unavailable",
+            basis="supplied_holding_cost_plus_cash_balance",
+            total_value=None,
+            allocations=[
+                PortfolioAllocation(symbol, None, None, None, None, None)
+                for symbol in liquid_symbols
+            ],
+            reason=",".join(_deduplicate(liquid_unavailable_reasons)),
+        )
+    else:
+        liquid_values = dict(values)
+        liquid_values["Cash"] = sum(cash_by_role.values())
+        liquid_total = sum(liquid_values.values())
+        liquid_view = PortfolioAllocationView(
+            status="available",
+            basis="supplied_holding_cost_plus_cash_balance",
+            total_value=liquid_total,
+            allocations=_allocations(liquid_values, liquid_total, {}),
+        )
     return PortfolioSummary(
         base_currency=profile.base_currency,
         total_holding_cost=total,
@@ -144,6 +214,8 @@ def analyze_portfolio_summary(
         unknown_cash=cash_by_role["unknown"],
         snapshot_status=snapshot_status,
         notes=_deduplicate(notes),
+        invested_allocation=invested_view,
+        liquid_asset_allocation=liquid_view,
     )
 
 
@@ -347,7 +419,10 @@ def assess_market_risk(
     vix_points = 0
     if breadth.vix_level is not None:
         vix_points = 15 if breadth.vix_level >= 30 else 8 if breadth.vix_level >= 20 else 0
-    if breadth.vix_percentile is not None and breadth.vix_percentile >= 0.90:
+    if (
+        breadth.vix_level_percentile_252d is not None
+        and breadth.vix_level_percentile_252d >= 0.90
+    ):
         vix_points = max(vix_points, 12)
     score = min(100, unusual_move_points + breadth_points + vix_points)
     explanations = [
@@ -355,7 +430,7 @@ def assess_market_risk(
         f"{len(cluster_results)} correlated clusters, {unusual_move_points} "
         "points; correlated assets count once per cluster.",
         f"Tracked-universe breadth: {breadth_points} points.",
-        f"VIX level/percentile: {vix_points} points.",
+        f"VIX level/252D level percentile: {vix_points} points.",
         f"Total market risk: {score}/100.",
     ]
     return RiskAssessment(
@@ -449,7 +524,7 @@ def build_report_use_states(
     portfolio_decision_risk: PortfolioRiskAssessment,
     news_quality: NewsQualityGate | None,
     profile: ReportProfile | None = None,
-    fx_costs: list[FxCostComparison] | None = None,
+    fx_state: FxState | None = None,
 ) -> ReportUseStates:
     spy_row = next(
         (
@@ -497,18 +572,12 @@ def build_report_use_states(
     macro_status = "available" if macro_available else "blocked"
     macro_reasons = () if macro_available else ("macro regime is unavailable",)
 
-    if fx_costs is None:
+    if fx_state is None:
         fx_status = "degraded"
-        fx_reasons = ("FX comparison state was not evaluated",)
-    elif not fx_costs:
-        fx_status = "blocked"
-        fx_reasons = ("no comparable CNY/USD conversion is available",)
-    elif any(item.spot_rate is None for item in fx_costs):
-        fx_status = "degraded"
-        fx_reasons = ("USD/CNH spot is unavailable for one or more conversions",)
+        fx_reasons = ("fx_state_not_evaluated",)
     else:
-        fx_status = "available"
-        fx_reasons = ()
+        fx_status = fx_state.status
+        fx_reasons = fx_state.reasons
 
     news_blocked = (
         news_quality is None
@@ -625,6 +694,49 @@ def analyze_fx_costs(
     return results
 
 
+def analyze_fx_state(
+    portfolio_state: PortfolioReportState | None,
+    portfolio_summary: PortfolioSummary,
+    usd_cnh_history: list[PriceBar],
+) -> FxState:
+    comparisons = analyze_fx_costs(portfolio_state, usd_cnh_history)
+    spot = (
+        max(usd_cnh_history, key=lambda item: item.date).close
+        if usd_cnh_history
+        else None
+    )
+    cost_basis = _weighted_fx_cost_basis(portfolio_state)
+    reasons: list[str] = []
+    if portfolio_state is None:
+        reasons.append("portfolio_state_not_supplied")
+    elif cost_basis is None:
+        reasons.append("cny_usd_cost_basis_unavailable")
+    if spot is None:
+        reasons.append("usd_cnh_spot_unavailable")
+    status = (
+        "blocked"
+        if portfolio_state is None or cost_basis is None
+        else "degraded"
+        if spot is None
+        else "available"
+    )
+    return FxState(
+        status=status,
+        usd_balance=portfolio_summary.usd_cash,
+        usd_required_daily=portfolio_summary.usd_daily_spend,
+        coverage_days=portfolio_summary.usd_coverage_days,
+        spot_usd_cnh=spot,
+        cost_basis=cost_basis,
+        difference_pct=(
+            spot / cost_basis - 1
+            if spot is not None and cost_basis not in {None, 0}
+            else None
+        ),
+        reasons=tuple(reasons),
+        comparisons=tuple(comparisons),
+    )
+
+
 def evaluate_strategy_rules(
     price_signals: dict[str, PriceSignal],
     sector_rotation: SectorRotation,
@@ -688,11 +800,12 @@ def evaluate_strategy_rules(
                 ),
                 "triggered",
                 ", ".join(sorted(signal.symbol for signal in triggered)),
-                "z ≥ 2.0, ATR ≥ 1.5x, or percentile ≥ 95%",
+                "absolute-move z-score ≥ 2.0, ATR ≥ 1.5x, or "
+                "absolute-move percentile ≥ 95%",
                 strongest.reason,
-                return_zscore=strongest.return_zscore_60d,
+                return_zscore=strongest.absolute_move_z_score_60d,
                 atr_multiple=strongest.atr_multiple,
-                historical_percentile=strongest.historical_percentile,
+                historical_percentile=strongest.absolute_move_percentile_252d,
                 evidence_refs=tuple(
                     sorted(_evidence_ref(signal) for signal in triggered)
                 ),
@@ -762,7 +875,9 @@ def build_report_state(
     rules: list[StrategyRuleResult],
     evidence: list[MarketEvidence],
     portfolio: PortfolioSummary,
+    fx_state: FxState | None = None,
 ) -> ReportState:
+    liquid_view = portfolio.liquid_asset_allocation
     return ReportState(
         data_quality_status=(
             use_states.data_quality.overall.status
@@ -799,6 +914,29 @@ def build_report_state(
                 if row.weight_gap is not None
             )
         ),
+        capabilities=_serialize_capabilities(use_states),
+        invested_allocation=_serialize_allocation(
+            portfolio.invested_allocation.allocations
+            if portfolio.invested_allocation is not None
+            else portfolio.allocations
+        ),
+        liquid_asset_allocation_status=(
+            liquid_view.status if liquid_view is not None else "unavailable"
+        ),
+        liquid_asset_allocation_reason=(
+            liquid_view.reason if liquid_view is not None else "not_generated"
+        ),
+        liquid_asset_allocation=_serialize_allocation(
+            liquid_view.allocations if liquid_view is not None else []
+        ),
+        fx_status=fx_state.status if fx_state is not None else "unavailable",
+        fx_spot_usd_cnh=(
+            fx_state.spot_usd_cnh if fx_state is not None else None
+        ),
+        fx_cost_basis=fx_state.cost_basis if fx_state is not None else None,
+        fx_difference_pct=(
+            fx_state.difference_pct if fx_state is not None else None
+        ),
     )
 
 
@@ -808,6 +946,36 @@ def serialize_report_state(state: ReportState) -> str:
         + json.dumps(asdict(state), ensure_ascii=False, sort_keys=True)
         + REPORT_STATE_SUFFIX
     )
+
+
+def _serialize_capabilities(states: ReportUseStates) -> dict[str, str]:
+    if states.data_quality is None:
+        return {}
+    capabilities = states.data_quality.capabilities
+    return {
+        name: capability.status
+        for name, capability in (
+            ("market_analysis", capabilities.market_analysis),
+            ("macro_analysis", capabilities.macro_analysis),
+            ("portfolio_analysis", capabilities.portfolio_analysis),
+            ("investment_action", capabilities.investment_action),
+            ("fx_analysis", capabilities.fx_analysis),
+            ("news_analysis", capabilities.news_analysis),
+        )
+    }
+
+
+def _serialize_allocation(
+    allocations: list[PortfolioAllocation],
+) -> dict[str, float | None]:
+    return {
+        row.symbol: (
+            round(row.current_weight, 6)
+            if row.current_weight is not None
+            else None
+        )
+        for row in sorted(allocations, key=lambda item: item.symbol)
+    }
 
 
 def extract_report_state(content: str | None) -> ReportState | None:
@@ -883,6 +1051,21 @@ def extract_report_state(content: str | None) -> ReportState | None:
                 )
             ),
             portfolio_gaps=tuple(data["portfolio_gaps"]),
+            capabilities=dict(data.get("capabilities", {})),
+            invested_allocation=dict(data.get("invested_allocation", {})),
+            liquid_asset_allocation_status=data.get(
+                "liquid_asset_allocation_status", "unavailable"
+            ),
+            liquid_asset_allocation_reason=data.get(
+                "liquid_asset_allocation_reason", ""
+            ),
+            liquid_asset_allocation=dict(
+                data.get("liquid_asset_allocation", {})
+            ),
+            fx_status=data.get("fx_status", "unavailable"),
+            fx_spot_usd_cnh=data.get("fx_spot_usd_cnh"),
+            fx_cost_basis=data.get("fx_cost_basis"),
+            fx_difference_pct=data.get("fx_difference_pct"),
         )
     return None
 
@@ -925,6 +1108,15 @@ def compare_report_states(
         "triggered_rules": "Triggered/near rules",
         "medium_term_trends": "Medium-term trends",
         "portfolio_gaps": "Portfolio target gaps",
+        "capabilities": "Capability states",
+        "invested_allocation": "Invested sleeve allocation",
+        "liquid_asset_allocation_status": "Liquid asset allocation status",
+        "liquid_asset_allocation_reason": "Liquid asset allocation reason",
+        "liquid_asset_allocation": "Liquid asset allocation",
+        "fx_status": "FX status",
+        "fx_spot_usd_cnh": "USD/CNH spot",
+        "fx_cost_basis": "FX cost basis",
+        "fx_difference_pct": "FX spot-to-cost difference",
     }
     changes = [
         f"{label}: {_state_value(getattr(previous, field))} → "
@@ -1096,24 +1288,27 @@ def _market_evidence(signal: PriceSignal) -> MarketEvidence:
         medium_term_trend=trend,
         short_term_state=short_term,
         detection_reason=signal.reason,
-        return_zscore=signal.return_zscore_60d,
+        return_zscore=signal.absolute_move_z_score_60d,
         atr_multiple=signal.atr_multiple,
-        historical_percentile=signal.historical_percentile,
+        historical_percentile=signal.absolute_move_percentile_252d,
         sma_50=signal.sma_50,
         sma_200=signal.sma_200,
-        drawdown_from_high=signal.drawdown_from_high,
+        drawdown_from_high=signal.drawdown_from_252d_high,
+        sma_50_slope_20d=signal.sma_50_slope_20d,
         evidence_ref=_evidence_ref(signal),
     )
 
 
 def _medium_term_trend(signal: PriceSignal) -> str:
-    if signal.latest is None or signal.sma_50 is None:
+    if (
+        signal.latest is None
+        or signal.sma_50 is None
+        or signal.sma_200 is None
+    ):
         return "insufficient"
-    if signal.sma_200 is None:
-        return "above_50d" if signal.latest >= signal.sma_50 else "below_50d"
-    if signal.latest >= signal.sma_50 >= signal.sma_200:
+    if signal.latest > signal.sma_50 and signal.latest > signal.sma_200:
         return "medium_term_uptrend"
-    if signal.latest <= signal.sma_50 <= signal.sma_200:
+    if signal.latest < signal.sma_50 and signal.latest < signal.sma_200:
         return "medium_term_downtrend"
     return "mixed"
 
@@ -1121,9 +1316,9 @@ def _medium_term_trend(signal: PriceSignal) -> str:
 def _short_term_state(return_5d: float | None, trend: str) -> str:
     if return_5d is None:
         return "unknown"
-    if return_5d >= 0.01 and trend in {"medium_term_downtrend", "below_50d"}:
+    if return_5d >= 0.01 and trend == "medium_term_downtrend":
         return "countertrend_rebound"
-    if return_5d <= -0.01 and trend in {"medium_term_uptrend", "above_50d"}:
+    if return_5d <= -0.01 and trend == "medium_term_uptrend":
         return "countertrend_pullback"
     if return_5d >= 0.01:
         return "short_term_strength"
@@ -1134,9 +1329,9 @@ def _short_term_state(return_5d: float | None, trend: str) -> str:
 
 def _signal_severity(signal: PriceSignal) -> float:
     return max(
-        (signal.return_zscore_60d or 0) / 2.0,
+        (signal.absolute_move_z_score_60d or 0) / 2.0,
         (signal.atr_multiple or 0) / 1.5,
-        (signal.historical_percentile or 0) / 0.95,
+        (signal.absolute_move_percentile_252d or 0) / 0.95,
     )
 
 
@@ -1207,6 +1402,34 @@ def _fx_rates(
     return rates
 
 
+def _weighted_fx_cost_basis(
+    state: PortfolioReportState | None,
+) -> float | None:
+    if state is None:
+        return None
+    total_cny_cost = 0.0
+    total_usd_received = 0.0
+    for conversion in state.fx_conversions:
+        if not (
+            conversion.sold_currency == "CNY"
+            and conversion.bought_currency == "USD"
+        ):
+            continue
+        cny_cost = float(conversion.sold_amount)
+        usd_received = float(conversion.bought_amount)
+        if conversion.fee_currency == "CNY":
+            cny_cost += float(conversion.fee_amount)
+        elif conversion.fee_currency == "USD":
+            usd_received -= float(conversion.fee_amount)
+        if usd_received <= 0:
+            continue
+        total_cny_cost += cny_cost
+        total_usd_received += usd_received
+    if total_usd_received == 0:
+        return None
+    return total_cny_cost / total_usd_received
+
+
 def _spot_on_or_before(bars: list[PriceBar], target: date) -> float | None:
     eligible = [bar for bar in bars if bar.date <= target]
     return max(eligible, key=lambda bar: bar.date).close if eligible else None
@@ -1252,7 +1475,14 @@ def _gpt_question_refs(
 ) -> tuple[tuple[str, ...], str]:
     if any(
         term in question
-        for term in ["目标仓位", "配置缺口", "组合风险", "组合决策"]
+        for term in [
+            "目标仓位",
+            "配置缺口",
+            "组合风险",
+            "组合决策",
+            "组合敞口",
+            "组合数据质量",
+        ]
     ):
         return (
             tuple(

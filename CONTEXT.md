@@ -48,6 +48,17 @@ _Avoid_: FX suggestion, currency exposure
 The quantity of a holding multiplied by its supplied unit cost, denominated in the holding currency.
 _Avoid_: Market value, purchase amount
 
+**Invested Sleeve Allocation**:
+Each holding's share of supplied invested Holding Cost after FX conversion to
+the report base currency.
+_Avoid_: Market-value allocation, total liquid-asset allocation
+
+**Total Liquid Asset Allocation**:
+Each invested holding and aggregate Cash share of supplied Holding Cost plus
+Cash Position balances after FX conversion. It is unavailable when cash roles
+or required FX conversions are missing.
+_Avoid_: Market-value allocation, deployable-capital allocation
+
 **State Snapshot Date**:
 The date on which a cash position or holding snapshot describes the owned state.
 _Avoid_: Transaction date, import date
@@ -133,3 +144,20 @@ The difference between an FX Conversion's all-in effective rate and a supplied
 market spot benchmark. When USD/CNH is used for CNY/USD, it is an offshore
 approximation rather than an exact bank spread.
 _Avoid_: Bank spread, guaranteed conversion cost
+
+**FX State**:
+The current USD investment-cash balance, configured daily USD requirement,
+coverage days, latest USD/CNH spot, weighted all-in CNY/USD conversion cost
+basis, and spot-to-cost-basis difference.
+_Avoid_: FX recommendation, forecast
+
+**Absolute-Move z-score (60D)**:
+The latest absolute one-day return minus the mean prior absolute one-day return,
+divided by the standard deviation of prior signed daily returns within the
+60-session lookback.
+_Avoid_: Price-level z-score, volatility z-score
+
+**Absolute-Move Percentile (252D)**:
+The rank of the latest absolute one-day return among prior absolute daily
+returns in the rolling 252-session window.
+_Avoid_: Price-level percentile, VIX level percentile

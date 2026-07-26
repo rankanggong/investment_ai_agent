@@ -8,6 +8,7 @@ from app.models.analysis import (
     DataCoverageRow,
     DailySignalSummary,
     FxCostComparison,
+    FxState,
     GptAnalysisTask,
     MarketBreadth,
     MarketEvidence,
@@ -15,6 +16,7 @@ from app.models.analysis import (
     MacroContext,
     NewsQualityGate,
     NewsState,
+    PortfolioAllocationView,
     PortfolioDecisionState,
     PortfolioRiskAssessment,
     PortfolioSummary,
@@ -52,6 +54,7 @@ def render_daily_report(
     use_states: ReportUseStates | None = None,
     market_breadth: MarketBreadth | None = None,
     fx_costs: list[FxCostComparison] | None = None,
+    fx_state: FxState | None = None,
     key_evidence: list[MarketEvidence] | None = None,
     strategy_rules: list[StrategyRuleResult] | None = None,
     changes: list[str] | None = None,
@@ -229,6 +232,8 @@ def render_daily_report(
         lines.extend(["Evidence Ref: PORTFOLIO:FX", ""])
         lines.extend(_render_fx_conversions(portfolio_state.fx_conversions))
         lines.extend(["", "#### FX Cost vs Spot", ""])
+        lines.extend(_render_fx_state(fx_state))
+        lines.extend(["", "Conversion Detail", ""])
         lines.extend(_render_fx_costs(fx_costs or []))
     lines.extend(["", "### C. Company Price Bounds", ""])
     lines.extend(_render_company_price_bounds(company_price_bounds))
@@ -355,13 +360,15 @@ def _render_portfolio_summary(
     if summary is None:
         return ["Portfolio summary was not generated."]
     lines = [
-        f"Aggregation basis: supplied holding cost in {summary.base_currency}.",
-        "Current Allocation is within invested holdings only; it is not total "
-        "liquid-asset allocation.",
+        "### Invested Sleeve Allocation",
+        "",
+        f"Status: {_allocation_status(summary.invested_allocation)}",
+        "",
+        "Basis: supplied invested holding cost; this is not market value.",
         "",
         f"Total holding cost: {_format_money(summary.total_holding_cost, summary.base_currency)}",
         "",
-        "| Asset | Current Cost | Current Allocation | Target Allocation | Gap | Target Cost Gap |",
+        "| Asset | Supplied Cost | Invested Weight | Target Weight | Gap | Target Cost Gap |",
         "|---|---:|---:|---:|---:|---:|",
     ]
     if summary.allocations:
@@ -376,6 +383,37 @@ def _render_portfolio_summary(
             )
     else:
         lines.append("| None | N/A | N/A | N/A | N/A | N/A |")
+    lines.extend(["", "### Total Liquid Asset Allocation", ""])
+    liquid_view = summary.liquid_asset_allocation
+    if liquid_view is None:
+        lines.append("Status: unavailable")
+        lines.append("")
+        lines.append("Reason: liquid_asset_allocation_not_generated")
+    else:
+        lines.extend([
+            f"Status: {liquid_view.status}",
+            "",
+            f"Basis: {liquid_view.basis}; this is not market value.",
+        ])
+        if liquid_view.reason:
+            lines.extend(["", f"Reason: {liquid_view.reason}"])
+        lines.extend([
+            "",
+            f"Total liquid asset basis value: "
+            f"{_format_money(liquid_view.total_value, summary.base_currency)}",
+            "",
+            "| Asset | Basis Value | Weight |",
+            "|---|---:|---:|",
+        ])
+        if liquid_view.allocations:
+            lines.extend(
+                f"| {row.symbol} | "
+                f"{_format_money(row.current_value, summary.base_currency)} | "
+                f"{_format_percent(row.current_weight)} |"
+                for row in liquid_view.allocations
+            )
+        else:
+            lines.append("| None | N/A | N/A |")
     lines.extend(
         [
             "",
@@ -415,8 +453,8 @@ def _render_key_evidence(evidence: list[MarketEvidence]) -> list[str]:
     if not evidence:
         return ["No key market evidence available."]
     lines = [
-        "| Ref | Asset / Macro | Latest | 1D | 5D | 20D | Medium-Term Trend | 50D | 200D | Drawdown | z-score | ATR | Percentile | Short-Term State | Detection Reason |",
-        "|---|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---|---|",
+        "| Ref | Asset / Macro | Latest | 1D | 5D | 20D | Medium-Term Trend | 50D | 200D | 50DMA Slope 20D | Drawdown from 252D High | Absolute-Move z-score 60D | ATR | Absolute-Move Percentile 252D | Short-Term State | Detection Reason |",
+        "|---|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---|---|",
     ]
     for row in evidence:
         lines.append(
@@ -424,10 +462,11 @@ def _render_key_evidence(evidence: list[MarketEvidence]) -> list[str]:
             f"{_format_percent(row.return_1d)} | {_format_percent(row.return_5d)} | "
             f"{_format_percent(row.return_20d)} | {row.medium_term_trend} | "
             f"{_format_decimal_or_na(row.sma_50)} | {_format_decimal_or_na(row.sma_200)} | "
-            f"{_format_percent(row.drawdown_from_high)} | "
-            f"{_format_decimal_or_na(row.return_zscore)} | "
+            f"{_format_percent(row.sma_50_slope_20d)} | "
+            f"{_format_percent(row.drawdown_from_252d_high)} | "
+            f"{_format_decimal_or_na(row.absolute_move_z_score_60d)} | "
             f"{_format_multiple(row.atr_multiple)} | "
-            f"{_format_percent(row.historical_percentile)} | "
+            f"{_format_percent(row.absolute_move_percentile_252d)} | "
             f"{row.short_term_state} | {_escape_cell(row.detection_reason)} |"
         )
     return lines
@@ -435,17 +474,27 @@ def _render_key_evidence(evidence: list[MarketEvidence]) -> list[str]:
 
 def _render_metric_definitions() -> list[str]:
     return [
+        "Trend Model:",
+        "- Medium-term inputs: close versus 50DMA, close versus 200DMA, and "
+        "the 20-session change in 50DMA as supporting slope evidence.",
+        "- medium_term_uptrend: close is above both 50DMA and 200DMA.",
+        "- medium_term_downtrend: close is below both 50DMA and 200DMA.",
+        "- mixed: all other combinations.",
+        "- insufficient: either 50DMA or 200DMA is unavailable.",
+        "",
         "Metric Definitions:",
-        "- z-score: latest absolute 1D return minus the mean absolute 1D return "
+        "- absolute_move_z_score_60d: latest absolute 1D return minus the mean "
+        "absolute 1D return "
         "over the prior observations in a 60-session lookback, divided by the "
-        "standard deviation of those prior daily returns.",
+        "standard deviation of those prior signed daily returns.",
         "- ATR multiple: absolute latest close-to-close move divided by 20-day "
         "average true range.",
-        "- Percentile: rank of the latest absolute 1D return against up to 252 "
+        "- absolute_move_percentile_252d: rank of the latest absolute 1D return "
+        "against up to 252 "
         "prior absolute daily returns; 95% means the move is at least as large "
         "as 95% of the comparison history.",
-        "- Drawdown: latest close divided by the highest close in the latest "
-        "252 sessions, minus one.",
+        "- drawdown_from_252d_high: latest close divided by the highest close "
+        "in the latest 252 sessions, minus one.",
     ]
 
 
@@ -455,16 +504,16 @@ def _render_triggered_rules(
     if not rules:
         return ["No strategy rule is triggered or near its threshold."]
     lines = [
-        "| Rule | Status | Observed | Threshold | z-score | ATR | Percentile | Evidence Refs | Detection Reason |",
+        "| Rule | Status | Observed | Threshold | Absolute-Move z-score 60D | ATR | Absolute-Move Percentile 252D | Evidence Refs | Detection Reason |",
         "|---|---|---|---|---:|---:|---:|---|---|",
     ]
     for rule in rules:
         lines.append(
             f"| {rule.name} | {rule.status} | {_escape_cell(rule.observed)} | "
             f"{_escape_cell(rule.threshold)} | "
-            f"{_format_decimal_or_na(rule.return_zscore)} | "
+            f"{_format_decimal_or_na(rule.absolute_move_z_score_60d)} | "
             f"{_format_multiple(rule.atr_multiple)} | "
-            f"{_format_percent(rule.historical_percentile)} | "
+            f"{_format_percent(rule.absolute_move_percentile_252d)} | "
             f"{_escape_cell(', '.join(rule.evidence_refs) or 'N/A')} | "
             f"{_escape_cell(rule.reason)} |"
         )
@@ -482,7 +531,8 @@ def _render_market_breadth(breadth: MarketBreadth | None) -> list[str]:
         f"({_format_percent(breadth.above_200d_share)} of eligible assets).",
         f"- RSP vs SPY 20D: {_format_percent(breadth.rsp_vs_spy_20d)}.",
         f"- VIX: {_format_decimal_or_na(breadth.vix_level)}; "
-        f"level percentile {_format_percent(breadth.vix_percentile)}.",
+        f"252D level percentile "
+        f"{_format_percent(breadth.vix_level_percentile_252d)}.",
         "- Breadth covers the configured tracked universe, not the full NYSE/Nasdaq.",
     ]
 
@@ -550,15 +600,35 @@ def _render_fx_costs(costs: list[FxCostComparison]) -> list[str]:
     return lines
 
 
+def _render_fx_state(state: FxState | None) -> list[str]:
+    if state is None:
+        return ["FX state was not generated."]
+    lines = [
+        f"Status: {state.status}",
+        f"- USD investment cash balance: USD {state.usd_balance:.2f}",
+        f"- USD required daily: {_format_money(state.usd_required_daily, 'USD')}",
+        (
+            "- Coverage days: N/A"
+            if state.coverage_days is None
+            else f"- Coverage days: {state.coverage_days:.1f}"
+        ),
+        f"- USD/CNH spot: {_format_decimal_or_na(state.spot_usd_cnh)}",
+        f"- Weighted all-in cost basis: {_format_decimal_or_na(state.cost_basis)}",
+        f"- Spot versus cost basis: {_format_percent(state.difference_pct)}",
+    ]
+    lines.extend(f"- Reason: {reason}" for reason in state.reasons)
+    return lines
+
+
 def _render_full_price_evidence(
     price_signals: dict[str, PriceSignal],
 ) -> list[str]:
     lines = [
-        "| Asset | Latest | Latest Date | 1D | 5D | 20D | 50D | 200D | Drawdown | z-score | ATR | Percentile | Detection Reason |",
-        "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| Asset | Latest | Latest Date | 1D | 5D | 20D | 50D | 200D | 50DMA Slope 20D | Drawdown from 252D High | Absolute-Move z-score 60D | ATR | Absolute-Move Percentile 252D | Detection Reason |",
+        "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     if not price_signals:
-        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | No price signals. |")
+        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | No price signals. |")
         return lines
     for symbol in sorted(price_signals):
         signal = price_signals[symbol]
@@ -570,10 +640,11 @@ def _render_full_price_evidence(
             f"{_format_percent(signal.return_20d)} | "
             f"{_format_decimal_or_na(signal.sma_50)} | "
             f"{_format_decimal_or_na(signal.sma_200)} | "
-            f"{_format_percent(signal.drawdown_from_high)} | "
-            f"{_format_decimal_or_na(signal.return_zscore_60d)} | "
+            f"{_format_percent(signal.sma_50_slope_20d)} | "
+            f"{_format_percent(signal.drawdown_from_252d_high)} | "
+            f"{_format_decimal_or_na(signal.absolute_move_z_score_60d)} | "
             f"{_format_multiple(signal.atr_multiple)} | "
-            f"{_format_percent(signal.historical_percentile)} | "
+            f"{_format_percent(signal.absolute_move_percentile_252d)} | "
             f"{_escape_cell(signal.reason or 'No detector threshold crossed.')} |"
         )
     return lines
@@ -615,6 +686,10 @@ def _format_multiple(value: float | None) -> str:
 
 def _format_money(value: float | None, currency: str) -> str:
     return "N/A" if value is None else f"{currency} {value:.2f}"
+
+
+def _allocation_status(view: PortfolioAllocationView | None) -> str:
+    return view.status if view is not None else "available"
 
 
 def _format_percent(value: float | None) -> str:

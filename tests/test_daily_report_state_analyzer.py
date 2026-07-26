@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from app.analyzers.daily_report_state_analyzer import (
     analyze_fx_costs,
+    analyze_fx_state,
     analyze_market_breadth,
     analyze_portfolio_summary,
     assess_market_risk,
@@ -160,6 +161,21 @@ def test_key_evidence_uses_medium_term_trend_and_standardized_metrics():
     assert result.evidence_ref == "PRICE:QQQ:2026-07-24"
 
 
+def test_medium_term_trend_uses_close_against_both_moving_averages():
+    result = select_key_market_evidence(
+        {
+            "QQQ": signal(
+                "QQQ",
+                latest=110,
+                sma50=90,
+                sma200=100,
+            )
+        }
+    )[0]
+
+    assert result.medium_term_trend == "medium_term_uptrend"
+
+
 def test_combined_data_quality_prioritizes_news_blocked_and_portfolio_stale():
     state = portfolio_state()
     stale_state = PortfolioReportState(
@@ -233,6 +249,9 @@ def test_market_and_portfolio_state_round_trip_and_compare():
     breadth = analyze_market_breadth({}, {})
     market = assess_market_risk({}, breadth)
     portfolio = assess_portfolio_decision_risk(summary)
+    fx_state = analyze_fx_state(
+        portfolio_state(), summary, [bar(date(2026, 7, 25), 7.0)]
+    )
     macro = MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", [])
     rotation = type(
         "Rotation",
@@ -253,6 +272,7 @@ def test_market_and_portfolio_state_round_trip_and_compare():
         NewsQualityGate(
             None, 0.8, "disabled", None, None, "unavailable", ["Disabled."]
         ),
+        fx_state=fx_state,
     )
     state = build_report_state(
         use_states,
@@ -261,9 +281,15 @@ def test_market_and_portfolio_state_round_trip_and_compare():
         [],
         [],
         summary,
+        fx_state,
     )
     restored = extract_report_state(serialize_report_state(state))
 
+    assert state.capabilities["market_analysis"] == "available"
+    assert state.invested_allocation == {"QQQ": 1.0}
+    assert state.liquid_asset_allocation_status == "available"
+    assert set(state.liquid_asset_allocation) == {"Cash", "QQQ"}
+    assert state.fx_status == "available"
     assert compare_report_states(restored, state) == ["No state changes detected."]
 
 
@@ -470,9 +496,7 @@ def test_gpt_fx_task_is_degraded_when_spot_comparison_is_missing():
         risk,
         None,
         ReportProfile(),
-        [
-            analyze_fx_costs(portfolio_state(), [])[0],
-        ],
+        analyze_fx_state(portfolio_state(), summary, []),
     )
 
     task = build_gpt_tasks(
@@ -484,4 +508,71 @@ def test_gpt_fx_task_is_degraded_when_spot_comparison_is_missing():
     )[0]
 
     assert task.status == "degraded"
-    assert "USD/CNH spot" in task.blocked_reason
+    assert "usd_cnh_spot_unavailable" in task.blocked_reason
+
+
+def test_portfolio_summary_exposes_invested_and_liquid_allocation_views():
+    result = analyze_portfolio_summary(
+        portfolio_state(),
+        ReportProfile(target_allocations={"QQQ": 1.0}),
+        {"USD/CNH": signal("USD/CNH", latest=7.0)},
+        date(2026, 7, 25),
+    )
+
+    assert result.invested_allocation is not None
+    assert result.invested_allocation.basis == "supplied_invested_holding_cost"
+    assert result.invested_allocation.allocations[0].current_weight == 1.0
+    assert result.liquid_asset_allocation is not None
+    assert result.liquid_asset_allocation.status == "available"
+    liquid_weights = {
+        row.symbol: row.current_weight
+        for row in result.liquid_asset_allocation.allocations
+    }
+    assert round(liquid_weights["QQQ"] or 0, 4) == 0.0694
+    assert round(liquid_weights["Cash"] or 0, 4) == 0.9306
+
+
+def test_liquid_allocation_is_unavailable_for_unknown_cash_role():
+    state = portfolio_state()
+    summary = analyze_portfolio_summary(
+        PortfolioReportState(
+            state.holdings,
+            state.fx_conversions,
+            [
+                CashPosition(
+                    "bank", "cash", "CNY", Decimal("1000"),
+                    date(2026, 7, 24), cash_role="unknown",
+                )
+            ],
+        ),
+        ReportProfile(),
+        {},
+        date(2026, 7, 25),
+    )
+
+    assert summary.liquid_asset_allocation is not None
+    assert summary.liquid_asset_allocation.status == "unavailable"
+    assert summary.liquid_asset_allocation.reason == "cash_role_not_configured"
+    assert all(
+        row.current_weight is None
+        for row in summary.liquid_asset_allocation.allocations
+    )
+
+
+def test_fx_state_uses_current_spot_and_weighted_all_in_cost_basis():
+    summary = analyze_portfolio_summary(
+        portfolio_state(), ReportProfile(usd_daily_spend=10), {},
+        date(2026, 7, 25),
+    )
+
+    state = analyze_fx_state(
+        portfolio_state(),
+        summary,
+        [bar(date(2026, 7, 15), 7.0), bar(date(2026, 7, 25), 6.77)],
+    )
+
+    assert state.status == "available"
+    assert state.spot_usd_cnh == 6.77
+    assert state.cost_basis == 7.07
+    assert round(state.difference_pct or 0, 4) == -0.0424
+    assert state.coverage_days == 120.0

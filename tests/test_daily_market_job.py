@@ -63,9 +63,15 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
 
     content = path.read_text(encoding="utf-8")
     assert "## 2. Portfolio Summary" in content
+    assert "### Invested Sleeve Allocation" in content
+    assert "### Total Liquid Asset Allocation" in content
+    assert "Basis: supplied_holding_cost_plus_cash_balance" in content
     assert "| VOO | CNY 30.00 | 100.00% | N/A | N/A | N/A |" in content
     assert "### B. Account Detail" in content
     assert "| broker | fund | VOO | Vanguard S&P 500 ETF |" in content
     assert "#### FX Conversions" in content
     assert "| 2026-07-15 | bank / usd | CNY 13587.60 | USD 2000.00 |" in content
     assert "| bank | cash | USD | 9000 | investment_cash | 2026-07-19 |" in content
+    assert "Status: degraded" in content
+    assert "- Weighted all-in cost basis: 6.79" in content
+    assert "- Reason: usd_cnh_spot_unavailable" in content

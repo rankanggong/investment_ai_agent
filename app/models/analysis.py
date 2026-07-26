@@ -24,6 +24,19 @@ class PriceSignal:
     atr_multiple: float | None = None
     return_zscore_60d: float | None = None
     historical_percentile: float | None = None
+    sma_50_slope_20d: float | None = None
+
+    @property
+    def absolute_move_z_score_60d(self) -> float | None:
+        return self.return_zscore_60d
+
+    @property
+    def absolute_move_percentile_252d(self) -> float | None:
+        return self.historical_percentile
+
+    @property
+    def drawdown_from_252d_high(self) -> float | None:
+        return self.drawdown_from_high
 
 
 @dataclass(frozen=True)
@@ -171,6 +184,15 @@ class PortfolioAllocation:
 
 
 @dataclass(frozen=True)
+class PortfolioAllocationView:
+    status: str
+    basis: str
+    total_value: float | None
+    allocations: list[PortfolioAllocation]
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class PortfolioSummary:
     base_currency: str
     total_holding_cost: float | None
@@ -186,6 +208,8 @@ class PortfolioSummary:
     unknown_cash: float | None = None
     snapshot_status: str = "unavailable"
     notes: list[str] = field(default_factory=list)
+    invested_allocation: PortfolioAllocationView | None = None
+    liquid_asset_allocation: PortfolioAllocationView | None = None
 
     @property
     def investable_cash(self) -> float | None:
@@ -250,7 +274,20 @@ class MarketEvidence:
     sma_50: float | None = None
     sma_200: float | None = None
     drawdown_from_high: float | None = None
+    sma_50_slope_20d: float | None = None
     evidence_ref: str = ""
+
+    @property
+    def absolute_move_z_score_60d(self) -> float | None:
+        return self.return_zscore
+
+    @property
+    def absolute_move_percentile_252d(self) -> float | None:
+        return self.historical_percentile
+
+    @property
+    def drawdown_from_252d_high(self) -> float | None:
+        return self.drawdown_from_high
 
 
 @dataclass(frozen=True)
@@ -265,6 +302,14 @@ class StrategyRuleResult:
     historical_percentile: float | None = None
     evidence_refs: tuple[str, ...] = ()
 
+    @property
+    def absolute_move_z_score_60d(self) -> float | None:
+        return self.return_zscore
+
+    @property
+    def absolute_move_percentile_252d(self) -> float | None:
+        return self.historical_percentile
+
 
 @dataclass(frozen=True)
 class MarketBreadth:
@@ -277,6 +322,10 @@ class MarketBreadth:
     vix_level: float | None
     vix_percentile: float | None
 
+    @property
+    def vix_level_percentile_252d(self) -> float | None:
+        return self.vix_percentile
+
 
 @dataclass(frozen=True)
 class FxCostComparison:
@@ -287,6 +336,19 @@ class FxCostComparison:
     spot_rate: float | None
     spot_premium: float | None
     benchmark_note: str
+
+
+@dataclass(frozen=True)
+class FxState:
+    status: str
+    usd_balance: float
+    usd_required_daily: float | None
+    coverage_days: float | None
+    spot_usd_cnh: float | None
+    cost_basis: float | None
+    difference_pct: float | None
+    reasons: tuple[str, ...] = ()
+    comparisons: tuple[FxCostComparison, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -376,6 +438,15 @@ class ReportState:
     triggered_rules: tuple[str, ...]
     medium_term_trends: tuple[str, ...]
     portfolio_gaps: tuple[str, ...]
+    capabilities: dict[str, str] = field(default_factory=dict)
+    invested_allocation: dict[str, float | None] = field(default_factory=dict)
+    liquid_asset_allocation_status: str = "unavailable"
+    liquid_asset_allocation_reason: str = ""
+    liquid_asset_allocation: dict[str, float | None] = field(default_factory=dict)
+    fx_status: str = "unavailable"
+    fx_spot_usd_cnh: float | None = None
+    fx_cost_basis: float | None = None
+    fx_difference_pct: float | None = None
 
 
 @dataclass(frozen=True)
