@@ -75,7 +75,9 @@ def test_factor_exposure_can_overlap_and_maps_market_risk_to_portfolio():
         ("risk_component", "volatility", 10),
         ("risk_cluster", "broad_equity_growth", 8),
     ]
-    assert impacts["gold"].impact_score == 2
+    assert impacts["gold"].impact_score == 0
+    assert impacts["gold"].contributions[0].source_kind == "single_asset_alert"
+    assert impacts["gold"].contributions[0].risk_points == 0
     assert impacts["gold"].evidence_refs == ("PRICE:GLD",)
 
 

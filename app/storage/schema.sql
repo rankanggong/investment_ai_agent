@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS decision_states (
   rule_states_json TEXT NOT NULL DEFAULT '{}',
   reasons_json TEXT NOT NULL DEFAULT '[]',
   execution_status TEXT NOT NULL DEFAULT 'blocked',
-  permission_status TEXT NOT NULL DEFAULT 'denied',
+  permission_status TEXT NOT NULL DEFAULT 'unknown',
   proposed_amount REAL,
   proposed_currency TEXT,
   execution_reasons_json TEXT NOT NULL DEFAULT '[]',
@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS news_items (
 CREATE TABLE IF NOT EXISTS valuation_observations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   symbol TEXT NOT NULL,
+  asset_type TEXT NOT NULL DEFAULT 'unknown',
   as_of_date TEXT NOT NULL,
   metric TEXT NOT NULL,
   value REAL NOT NULL,
@@ -86,6 +87,7 @@ CREATE TABLE IF NOT EXISTS valuation_observations (
 CREATE TABLE IF NOT EXISTS earnings_estimate_observations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   symbol TEXT NOT NULL,
+  asset_type TEXT NOT NULL DEFAULT 'unknown',
   as_of_date TEXT NOT NULL,
   fiscal_period TEXT NOT NULL,
   metric TEXT NOT NULL,

@@ -57,10 +57,6 @@
     "earnings_revision_stale_after_days": null,
     "earnings_revision_materiality": null
   },
-  "news_policy": {
-    "entity_precision_threshold": 0.8,
-    "max_age_days": 7
-  },
   "strategy_rules": [
     {
       "id": "qqq_pause_on_negative_revision",
@@ -111,9 +107,9 @@
           "value": -0.08
         },
         {
-          "metric": "credit_state",
-          "operator": "!=",
-          "value": "credit_stress"
+          "metric": "credit_safety_state",
+          "operator": "==",
+          "value": "safe"
         }
       ]
     },
@@ -132,6 +128,7 @@
     "市场风险如何通过组合因子敞口映射为组合影响，哪些证据与数据质量变化会改变结论？",
     "USD/CNH、美元指数与利率数据是否改变换汇时点的观察条件？",
     "在目标仓位与每日额度配置完整后，最大的配置缺口是什么？",
-    "估值观测与盈利预期修正是否一致，哪些数据缺口会阻断结论？"
+    "估值观测与盈利预期修正是否一致，哪些数据缺口会阻断结论？",
+    "检索并核验与当前市场状态、持仓和决策候选相关的近期新闻与官方资料；哪些事实可能解释或反驳现有判断？"
   ]
 }

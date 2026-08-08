@@ -70,11 +70,13 @@ def _derive_execution_readiness(
         return ExecutionReadiness(
             "blocked", None, None, None,
             ("decision_candidate_not_ready", "human_approval_required"),
+            permission_status="not_applicable",
         )
     if context is None:
         return ExecutionReadiness(
             "blocked", None, None, None,
             ("execution_context_not_supplied", "human_approval_required"),
+            permission_status="unknown",
         )
     permission = next(
         (
@@ -91,7 +93,9 @@ def _derive_execution_readiness(
         None,
     )
     reasons: list[str] = []
-    permission_reason = _permission_block_reason(permission, context.report_date)
+    permission_status, permission_reason = _permission_state(
+        permission, context.report_date
+    )
     if permission_reason:
         reasons.append(permission_reason)
     if policy is None:
@@ -124,7 +128,7 @@ def _derive_execution_readiness(
             daily_budget.currency if daily_budget else None,
             policy.method if policy else None,
             tuple([*reasons, "human_approval_required"]),
-            permission_status=(permission.status if permission else "missing"),
+            permission_status=permission_status,
         )
     amount = daily_budget.amount * (policy.budget_fraction or 0)
     if daily_budget.maximum_action_amount is not None:
@@ -151,19 +155,19 @@ def _derive_execution_readiness(
     )
 
 
-def _permission_block_reason(
+def _permission_state(
     permission: RuleExecutionPermission | None,
     report_date: date,
-) -> str:
+) -> tuple[str, str]:
     if permission is None:
-        return "rule_execution_permission_not_configured"
+        return "missing", "rule_execution_permission_not_configured"
     if permission.status != "allowed":
-        return "rule_execution_permission_denied"
+        return "denied", "rule_execution_permission_denied"
     if permission.valid_from and report_date < permission.valid_from:
-        return "rule_execution_permission_not_yet_valid"
+        return "not_yet_valid", "rule_execution_permission_not_yet_valid"
     if permission.valid_through and report_date > permission.valid_through:
-        return "rule_execution_permission_expired"
-    return ""
+        return "expired", "rule_execution_permission_expired"
+    return "allowed", ""
 
 
 def _evaluate_rule(
@@ -311,6 +315,22 @@ def _resolve_metric(
             ("MACRO:CREDIT",),
             "" if value is not None else f"missing_metric:{metric}",
         )
+    if metric == "credit_safety_state":
+        credit = macro_context.credit_context if macro_context else None
+        value = (
+            "safe"
+            if credit == "risk_appetite_supportive"
+            else "unsafe"
+            if credit == "credit_stress"
+            else "indeterminate"
+            if credit == "mixed"
+            else None
+        )
+        return (
+            value,
+            ("MACRO:CREDIT",),
+            "" if value is not None else f"missing_metric:{metric}",
+        )
     if metric == "earnings_revision_negative":
         key = f"{symbol}.earnings_revision_negative"
         value = fundamental_flags.get(key)
@@ -337,24 +357,50 @@ def _derive_action_readiness(
             ("strategy_rules_not_configured",),
         )
 
-    blocked = tuple(result for result in enabled if result.status == "blocked")
-    if blocked:
+    blocking_rules = tuple(result for result in enabled if result.blocking)
+    unknown_vetoes = tuple(
+        result for result in blocking_rules if result.status == "blocked"
+    )
+    if unknown_vetoes:
         return ActionReadiness(
             "blocked",
             None,
             None,
             None,
-            tuple(f"rule_blocked:{result.rule_id}" for result in blocked),
+            tuple(
+                f"veto_condition_unknown:{result.rule_id}"
+                for result in unknown_vetoes
+            ),
             tuple(
                 dict.fromkeys(
-                    ref for result in blocked for ref in result.evidence_refs
+                    ref for result in unknown_vetoes for ref in result.evidence_refs
                 )
             ),
+            veto_status="unknown",
+        )
+
+    active_vetoes = tuple(
+        result for result in blocking_rules if result.status == "triggered"
+    )
+    if active_vetoes:
+        selected = max(active_vetoes, key=lambda result: result.priority)
+        return ActionReadiness(
+            "vetoed",
+            selected.action,
+            selected.symbol,
+            selected.rule_id,
+            (f"veto_active:{selected.rule_id}", "human_approval_required"),
+            selected.evidence_refs,
+            veto_status="active",
         )
 
     triggered = sorted(
-        (result for result in enabled if result.status == "triggered"),
-        key=lambda result: (result.blocking, result.priority),
+        (
+            result
+            for result in enabled
+            if result.status == "triggered" and not result.blocking
+        ),
+        key=lambda result: result.priority,
         reverse=True,
     )
     if triggered:
@@ -366,6 +412,7 @@ def _derive_action_readiness(
             selected.rule_id,
             ("deterministic_rule_triggered", "human_approval_required"),
             selected.evidence_refs,
+            veto_status="clear" if blocking_rules else "not_configured",
         )
 
     return ActionReadiness(
@@ -377,6 +424,7 @@ def _derive_action_readiness(
         tuple(
             dict.fromkeys(ref for result in enabled for ref in result.evidence_refs)
         ),
+        veto_status="clear" if blocking_rules else "not_configured",
     )
 
 

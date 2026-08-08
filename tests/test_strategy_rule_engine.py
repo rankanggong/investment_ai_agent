@@ -139,7 +139,8 @@ def test_strategy_engine_blocks_when_safety_rule_data_is_missing():
     assert result.rules[0].status == "blocked"
     assert result.rules[1].status == "triggered"
     assert result.action_readiness.status == "blocked"
-    assert result.action_readiness.reasons == ("rule_blocked:pause",)
+    assert result.action_readiness.reasons == ("veto_condition_unknown:pause",)
+    assert result.action_readiness.veto_status == "unknown"
 
 
 def test_strategy_engine_waits_when_conditions_are_not_met():
@@ -167,6 +168,40 @@ def test_strategy_engine_waits_when_conditions_are_not_met():
 
     assert result.rules[0].status == "waiting"
     assert result.action_readiness.status == "waiting_for_condition"
+
+
+def test_credit_rule_requires_explicit_safe_state():
+    definition = (
+        StrategyRuleDefinition(
+            "credit_safe",
+            "QQQ",
+            "base_investment",
+            10,
+            True,
+            False,
+            (StrategyCondition("credit_safety_state", "==", "safe"),),
+        ),
+    )
+
+    indeterminate = evaluate_strategy_decision(
+        definition,
+        {"QQQ": signal("QQQ", -0.02)},
+        MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
+        breadth(),
+    )
+    safe = evaluate_strategy_decision(
+        definition,
+        {"QQQ": signal("QQQ", -0.02)},
+        MacroContext(
+            "mixed", "mixed", "risk_appetite_supportive", "mixed", "mixed", []
+        ),
+        breadth(),
+    )
+
+    assert indeterminate.rules[0].condition_results[0].observed == "indeterminate"
+    assert indeterminate.rules[0].status == "waiting"
+    assert safe.rules[0].condition_results[0].observed == "safe"
+    assert safe.rules[0].status == "triggered"
 
 
 def test_execution_respects_investment_action_capability_gate():
@@ -202,7 +237,9 @@ def test_execution_sizing_is_separate_from_triggered_rule_conditions():
     )
 
     assert result.action_readiness.status == "ready"
+    assert result.action_readiness.veto_status == "not_configured"
     assert result.execution_readiness.status == "awaiting_human_approval"
+    assert result.execution_readiness.permission_status == "allowed"
     assert result.execution_readiness.proposed_amount == 400
     assert "human_approval_required" in result.execution_readiness.reasons
 
@@ -293,5 +330,8 @@ def test_no_amount_safety_action_needs_permission_but_not_budget_or_targets():
     )
 
     assert result.action_readiness.candidate_action == "pause"
-    assert result.execution_readiness.status == "awaiting_human_approval"
+    assert result.action_readiness.status == "vetoed"
+    assert result.action_readiness.veto_status == "active"
+    assert result.execution_readiness.status == "blocked"
+    assert result.execution_readiness.permission_status == "not_applicable"
     assert result.execution_readiness.proposed_amount is None

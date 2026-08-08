@@ -461,12 +461,16 @@ def assess_market_risk(
         severity = max(_signal_severity(signal) for signal in triggered)
         points = min(10, max(1, round(severity * 5)))
         if len(triggered) >= 2:
+            downside_count = sum(
+                signal.return_1d is not None and signal.return_1d < 0
+                for signal in triggered
+            )
             cluster_results.append(
                 RiskClusterAssessment(
                     cluster=cluster,
                     symbols=tuple(sorted(signal.symbol for signal in triggered)),
                     severity=severity,
-                    points=points,
+                    points=points if downside_count >= 2 else 0,
                     evidence_refs=tuple(
                         sorted(_evidence_ref(signal) for signal in triggered)
                     ),
@@ -479,13 +483,11 @@ def assess_market_risk(
                     symbol=signal.symbol,
                     category=cluster,
                     severity=severity,
-                    points=points,
+                    points=0,
                     evidence_ref=_evidence_ref(signal),
                 )
             )
-    unusual_move_points = sum(item.points for item in cluster_results) + sum(
-        item.points for item in single_asset_alerts
-    )
+    downside_cluster_points = sum(item.points for item in cluster_results)
     breadth_points = 0
     if breadth.above_50d_share is not None:
         breadth_points += round(max(0.0, 0.5 - breadth.above_50d_share) * 20)
@@ -500,24 +502,25 @@ def assess_market_risk(
         and breadth.vix_level_percentile_252d >= 0.90
     ):
         vix_points = max(vix_points, 12)
-    score = min(100, unusual_move_points + breadth_points + vix_points)
+    score = min(100, downside_cluster_points + breadth_points + vix_points)
     explanations = [
-        f"Unusual-move risk: {len(single_asset_alerts)} single-asset alerts and "
-        f"{len(cluster_results)} correlated clusters, {unusual_move_points} "
-        "points; correlated assets count once per cluster.",
+        f"Abnormal-move alerts: {len(single_asset_alerts)} single-asset alerts and "
+        f"{len(cluster_results)} correlated clusters; alerts are informational "
+        "and do not add downside-risk points.",
+        f"Correlated downside clusters: {downside_cluster_points} points.",
         f"Tracked-universe breadth: {breadth_points} points.",
         f"VIX level/252D level percentile: {vix_points} points.",
-        f"Total market risk: {score}/100.",
+        f"Total market downside risk: {score}/100.",
     ]
     return RiskAssessment(
         score=score,
         level=_risk_level(score),
         explanations=explanations,
-        scope="market",
+        scope="market_downside",
         clusters=cluster_results,
         single_asset_alerts=single_asset_alerts,
         components={
-            "unusual_moves": unusual_move_points,
+            "downside_clusters": downside_cluster_points,
             "breadth": breadth_points,
             "volatility": vix_points,
         },
@@ -575,15 +578,15 @@ def assess_portfolio_decision_risk(
     if (summary.unknown_cash or 0) > 0:
         readiness_reasons.append("cash roles are unknown")
     return PortfolioRiskAssessment(
-        exposure_risk=RiskAssessment(
+        invested_sleeve_exposure_risk=RiskAssessment(
             score=exposure_score,
             level=_risk_level(exposure_score),
-            scope="portfolio_exposure",
+            scope="invested_sleeve_exposure",
             explanations=[
             f"Target-allocation gap: {gap_points} points.",
             f"Invested-holdings concentration: {concentration_points} points.",
                 f"USD coverage: {coverage_points} points.",
-                f"Total portfolio exposure risk: {exposure_score}/100.",
+                f"Total invested-sleeve exposure risk: {exposure_score}/100.",
             ],
         ),
         data_quality_risk=RiskAssessment(
@@ -683,25 +686,41 @@ def build_report_use_states(
         fx_status = fx_state.status
         fx_reasons = fx_state.reasons
 
+    news_external = (
+        news_quality is not None
+        and news_quality.status == "external_research"
+    )
     news_blocked = (
         news_quality is None
         or news_quality.status in {"disabled", "data_quality_review"}
     )
     news_state = NewsState(
-        quality="blocked" if news_blocked else "available",
-        actionability="unavailable" if news_blocked else "available",
+        quality=(
+            "external_research"
+            if news_external
+            else "blocked" if news_blocked else "available"
+        ),
+        actionability=(
+            "reference_only"
+            if news_external
+            else "unavailable" if news_blocked else "available"
+        ),
         reason=(
             "; ".join(news_quality.reasons)
             if news_quality is not None and news_quality.reasons
             else (
-                "News evidence is not available."
+                "Current news is delegated to a GPT research task."
+                if news_external
+                else "News evidence is not available."
                 if news_blocked
                 else "News evidence passed its quality gate."
             )
         ),
     )
     news_reasons = (
-        tuple(news_quality.reasons)
+        ()
+        if news_external
+        else tuple(news_quality.reasons)
         if news_quality is not None and news_quality.reasons
         else ("news evidence is unavailable",)
         if news_blocked
@@ -739,7 +758,11 @@ def build_report_use_states(
         ),
         fx_analysis=CapabilityState(fx_status, fx_reasons),
         news_analysis=CapabilityState(
-            "blocked" if news_blocked else "available",
+            (
+                "external_research"
+                if news_external
+                else "blocked" if news_blocked else "available"
+            ),
             news_reasons,
         ),
         fundamental_analysis=CapabilityState(
@@ -898,17 +921,6 @@ def evaluate_strategy_rules(
                 ),
             )
         )
-    if use_states.news.actionability != "available":
-        results.append(
-            StrategyRuleResult(
-                "News causal-analysis availability gate",
-                "triggered",
-                use_states.news.actionability,
-                "News quality and actionability must be available",
-                use_states.news.reason,
-                evidence_refs=("STATE:NEWS", "DQ:NEWS"),
-            )
-        )
     for cluster, symbols in RISK_CLUSTERS.items():
         triggered = [
             signal for symbol, signal in price_signals.items()
@@ -1022,8 +1034,12 @@ def build_report_state(
         portfolio_risk=use_states.portfolio.risk,
         portfolio_data_readiness=use_states.portfolio.data_readiness,
         portfolio_actionability=use_states.portfolio.actionability,
-        portfolio_exposure_risk_score=portfolio_decision_risk.exposure_risk.score,
-        portfolio_exposure_risk_level=portfolio_decision_risk.exposure_risk.level,
+        invested_sleeve_exposure_risk_score=(
+            portfolio_decision_risk.invested_sleeve_exposure_risk.score
+        ),
+        invested_sleeve_exposure_risk_level=(
+            portfolio_decision_risk.invested_sleeve_exposure_risk.level
+        ),
         portfolio_data_quality_risk_score=(
             portfolio_decision_risk.data_quality_risk.score
         ),
@@ -1073,6 +1089,11 @@ def build_report_state(
             if strategy_decision is not None
             else "blocked"
         ),
+        veto_status=(
+            strategy_decision.action_readiness.veto_status
+            if strategy_decision is not None
+            else "unknown"
+        ),
         candidate_action=(
             strategy_decision.action_readiness.candidate_action
             if strategy_decision is not None
@@ -1096,7 +1117,7 @@ def build_report_state(
         rule_execution_permission_status=(
             strategy_decision.execution_readiness.permission_status
             if strategy_decision is not None
-            else "denied"
+            else "unknown"
         ),
         proposed_action_amount=(
             strategy_decision.execution_readiness.proposed_amount
@@ -1275,15 +1296,21 @@ def extract_report_state(content: str | None) -> ReportState | None:
             portfolio_actionability=data.get(
                 "portfolio_actionability", "blocked"
             ),
-            portfolio_exposure_risk_score=int(
+            invested_sleeve_exposure_risk_score=int(
                 data.get(
-                    "portfolio_exposure_risk_score",
-                    data.get("portfolio_decision_risk_score", 0),
+                    "invested_sleeve_exposure_risk_score",
+                    data.get(
+                        "portfolio_exposure_risk_score",
+                        data.get("portfolio_decision_risk_score", 0),
+                    ),
                 )
             ),
-            portfolio_exposure_risk_level=data.get(
-                "portfolio_exposure_risk_level",
-                data.get("portfolio_decision_risk_level", "unknown"),
+            invested_sleeve_exposure_risk_level=data.get(
+                "invested_sleeve_exposure_risk_level",
+                data.get(
+                    "portfolio_exposure_risk_level",
+                    data.get("portfolio_decision_risk_level", "unknown"),
+                ),
             ),
             portfolio_data_quality_risk_score=int(
                 data.get(
@@ -1332,6 +1359,7 @@ def extract_report_state(content: str | None) -> ReportState | None:
             action_readiness_status=data.get(
                 "action_readiness_status", "blocked"
             ),
+            veto_status=data.get("veto_status", "unknown"),
             candidate_action=data.get("candidate_action"),
             candidate_symbol=data.get("candidate_symbol"),
             candidate_rule_id=data.get("candidate_rule_id"),
@@ -1339,7 +1367,7 @@ def extract_report_state(content: str | None) -> ReportState | None:
                 "execution_readiness_status", "blocked"
             ),
             rule_execution_permission_status=data.get(
-                "rule_execution_permission_status", "denied"
+                "rule_execution_permission_status", "unknown"
             ),
             proposed_action_amount=data.get("proposed_action_amount"),
             proposed_action_currency=data.get("proposed_action_currency"),
@@ -1415,8 +1443,8 @@ def compare_report_states(
         "portfolio_risk": "Portfolio risk",
         "portfolio_data_readiness": "Portfolio data readiness",
         "portfolio_actionability": "Portfolio actionability",
-        "portfolio_exposure_risk_score": "Portfolio exposure risk score",
-        "portfolio_exposure_risk_level": "Portfolio exposure risk level",
+        "invested_sleeve_exposure_risk_score": "Invested-sleeve exposure risk score",
+        "invested_sleeve_exposure_risk_level": "Invested-sleeve exposure risk level",
         "portfolio_data_quality_risk_score": "Portfolio data-quality risk score",
         "portfolio_data_quality_risk_level": "Portfolio data-quality risk level",
         "news_quality": "News quality",
@@ -1434,6 +1462,7 @@ def compare_report_states(
         "fx_cost_basis": "FX cost basis",
         "fx_difference_pct": "FX spot-to-cost difference",
         "action_readiness_status": "Action readiness",
+        "veto_status": "Safety veto",
         "candidate_action": "Decision candidate action",
         "candidate_symbol": "Decision candidate symbol",
         "candidate_rule_id": "Decision candidate rule",
@@ -1457,13 +1486,74 @@ def compare_report_states(
         "news_entity_pipeline_status": "News entity pipeline status",
         "strategy_rule_states": "Strategy rule states",
     }
-    changes = [
-        f"{label}: {_state_value(getattr(previous, field))} → "
-        f"{_state_value(getattr(current, field))}."
-        for field, label in labels.items()
-        if getattr(previous, field) != getattr(current, field)
-    ]
+    changes = []
+    for field, label in labels.items():
+        before = getattr(previous, field)
+        after = getattr(current, field)
+        if before == after:
+            continue
+        severity = _change_severity(field, before, after)
+        changes.append(
+            f"[{severity}] {label}: {_semantic_state_diff(before, after)}."
+        )
     return changes or ["No state changes detected."]
+
+
+def _semantic_state_diff(before, after) -> str:
+    if isinstance(before, dict) and isinstance(after, dict):
+        added = sorted(set(after) - set(before))
+        removed = sorted(set(before) - set(after))
+        changed = sorted(
+            key for key in set(before) & set(after) if before[key] != after[key]
+        )
+        parts = []
+        if added:
+            parts.append("added " + ", ".join(added))
+        if removed:
+            parts.append("removed " + ", ".join(removed))
+        if changed:
+            parts.append(
+                "changed "
+                + ", ".join(
+                    f"{key} ({_state_value(before[key])} → {_state_value(after[key])})"
+                    for key in changed
+                )
+            )
+        return "; ".join(parts) or "mapping content changed"
+    if isinstance(before, tuple) and isinstance(after, tuple):
+        added = sorted(set(after) - set(before))
+        removed = sorted(set(before) - set(after))
+        parts = []
+        if added:
+            parts.append("added " + ", ".join(added))
+        if removed:
+            parts.append("removed " + ", ".join(removed))
+        return "; ".join(parts) or "ordered values changed"
+    return f"{_state_value(before)} → {_state_value(after)}"
+
+
+def _change_severity(field: str, before, after) -> str:
+    if field in {
+        "action_readiness_status",
+        "veto_status",
+        "execution_readiness_status",
+        "rule_execution_permission_status",
+        "decision_context_status",
+    }:
+        return "critical"
+    if field in {
+        "market_actionability",
+        "portfolio_actionability",
+        "portfolio_data_readiness",
+        "data_quality_status",
+        "strategy_rule_states",
+        "valuation_status",
+        "earnings_revision_status",
+    }:
+        return "high"
+    if field.endswith("risk_score") or field.endswith("risk_level"):
+        return "medium"
+    return "low"
 
 
 def build_gpt_tasks(
@@ -1536,6 +1626,8 @@ def build_gpt_tasks(
             market_refs,
             evidence_by_symbol,
         )
+        if required_state == "external_research":
+            continue
         blocked_reasons: list[str] = []
         status = "ready"
         capability = None
@@ -1573,15 +1665,49 @@ def build_gpt_tasks(
             and not profile.target_allocations
         ):
             status = "blocked"
-            blocked_reasons.append("Target allocations are not configured.")
+            blocked_reasons.append("target allocations are not configured")
         task_id = (
             "evaluate_allocation_gap"
             if any(term in question for term in ["目标仓位", "配置缺口"])
+            else "research_external_news"
+            if any(term in question for term in ["新闻", "近期事件", "参考资料"])
             else f"profile_question_{index}_{required_state}"
         )
         questions.append(
-            (task_id, question, refs, status, tuple(blocked_reasons))
+            (
+                task_id,
+                question,
+                refs,
+                status,
+                tuple(dict.fromkeys(blocked_reasons)),
+            )
         )
+
+    news_question = next(
+        (
+            question
+            for question in profile.gpt_questions
+            if any(term in question for term in ["新闻", "近期事件", "参考资料"])
+        ),
+        (
+            "检索并核验与当前市场状态、持仓和决策候选相关的近期新闻与"
+            "官方资料；哪些事实可能解释或反驳现有判断？"
+        ),
+    )
+    questions.append(
+        (
+            "research_external_news",
+            news_question,
+            (
+                "STATE:MARKET",
+                "STATE:PORTFOLIO",
+                "PORTFOLIO:ALLOCATION",
+                "FUNDAMENTAL:STATE",
+            ),
+            "ready",
+            (),
+        )
+    )
 
     available_output = (
         "Conclusion; supporting evidence linked by ref; counterevidence; "
@@ -1592,15 +1718,27 @@ def build_gpt_tasks(
         "State that the task is blocked; list missing or stale inputs by evidence "
         "ref; do not infer a decision; specify what would unblock the task."
     )
+    external_research_output = (
+        "Current source summary with direct URL, publisher, publication date, and "
+        "event date for each material item; separate sourced facts from model "
+        "interpretation; explain relevance and counterevidence; state that research "
+        "was unavailable if browsing or source verification is unavailable; do not "
+        "turn news into an action or override deterministic rules."
+    )
     return [
         GptAnalysisTask(
             question=question,
             evidence_refs=evidence_refs,
             expected_output=(
-                blocked_output if status == "blocked" else available_output
+                external_research_output
+                if task_id == "research_external_news"
+                else blocked_output if status == "blocked" else available_output
             ),
             confidence_requirement=(
-                "Do not assign confidence while blocked."
+                "Confidence applies to interpretation, not sourced facts; identify "
+                "unverified or single-source claims."
+                if task_id == "research_external_news"
+                else "Do not assign confidence while blocked."
                 if status == "blocked"
                 else "State confidence as low/medium and name degraded inputs."
                 if status == "degraded"
@@ -1608,11 +1746,78 @@ def build_gpt_tasks(
             ),
             task_id=task_id,
             status=status,
-            blocked_reasons=blocked_reasons,
+            status_reasons=blocked_reasons,
         )
         for task_id, question, evidence_refs, status, blocked_reasons
-        in _deduplicate_task_specs(questions)[:6]
+        in _deduplicate_task_specs(questions)
     ]
+
+
+def build_evidence_registry(
+    evidence: list[MarketEvidence],
+    rules: list[StrategyRuleResult],
+    fundamental_state: FundamentalEvidenceState | None = None,
+) -> dict[str, str]:
+    """Build the canonical, unique Evidence Ref registry for report consumers."""
+    registry = {
+        "STATE:CHANGES": "Semantic changes since the previous report",
+        "STATE:MARKET": "Canonical market state",
+        "STATE:PORTFOLIO": "Canonical portfolio decision state",
+        "STATE:NEWS": "Current-news research mode",
+        "STATE:ACTION_READINESS": "Deterministic action and veto state",
+        "STATE:EXECUTION_READINESS": "Sizing and execution-permission state",
+        "BREADTH:MARKET": "Tracked-universe breadth",
+        "BREADTH:VIX": "VIX level and 252-day percentile",
+        "BREADTH:SECTOR_ROTATION": "Sector-rotation breadth",
+        "MACRO:CREDIT": "Canonical macro credit state",
+        "PORTFOLIO:ALLOCATION": "Invested-sleeve cost allocation and targets",
+        "PORTFOLIO:FACTOR_IMPACT": "Market-factor to portfolio-impact mapping",
+        "PORTFOLIO:FX": "FX balances, cost basis, and coverage",
+        "FUNDAMENTAL:STATE": "Asset-typed valuation and earnings evidence",
+        "DQ:MARKET": "Market data quality",
+        "DQ:PORTFOLIO:SNAPSHOT": "Portfolio snapshot freshness",
+        "DQ:PORTFOLIO:CASH_ROLES": "Cash-role classification quality",
+        "DQ:FUNDAMENTALS": "Fundamental data quality",
+        "DQ:FUNDAMENTALS:VALUATION": "Valuation data quality",
+        "DQ:FUNDAMENTALS:EARNINGS_REVISION": "Earnings-revision data quality",
+    }
+    for row in evidence:
+        registry[row.evidence_ref] = f"Price-derived evidence for {row.symbol}"
+    for rule in rules:
+        for ref in rule.evidence_refs:
+            registry.setdefault(ref, f"Condition evidence for {rule.rule_id or rule.name}")
+    if fundamental_state is not None:
+        for item in fundamental_state.valuations:
+            ref = (
+                f"VALUATION:{item.symbol}:{item.metric}:"
+                f"{item.as_of_date.isoformat()}:{item.source}"
+            )
+            registry[ref] = f"{item.asset_type} valuation observation for {item.symbol}"
+        for item in fundamental_state.revisions:
+            ref = (
+                f"EARNINGS_REVISION:{item.symbol}:{item.fiscal_period}:"
+                f"{item.metric}:{item.current_date.isoformat()}:{item.source}"
+            )
+            registry[ref] = f"{item.asset_type} earnings revision for {item.symbol}"
+    return dict(sorted(registry.items()))
+
+
+def validate_gpt_task_evidence(
+    tasks: list[GptAnalysisTask],
+    registry: dict[str, str],
+) -> None:
+    task_ids = [task.task_id for task in tasks]
+    if len(task_ids) != len(set(task_ids)):
+        raise ValueError("GPT task IDs must be unique")
+    for task in tasks:
+        if len(task.evidence_refs) != len(set(task.evidence_refs)):
+            raise ValueError(f"GPT task {task.task_id} has duplicate Evidence Refs")
+        missing = sorted(set(task.evidence_refs) - set(registry))
+        if missing:
+            raise ValueError(
+                f"GPT task {task.task_id} has unresolved Evidence Refs: "
+                + ", ".join(missing)
+            )
 
 
 def _allocations(
@@ -1900,13 +2105,6 @@ def _market_state_regime(
 ) -> str:
     if macro_context is None:
         return "unknown"
-    has_rotation = bool(
-        sector_rotation.strong_sectors or sector_rotation.weak_sectors
-    )
-    if macro_context.rates_context == "rates_pressure" and has_rotation:
-        return "rotation_under_rate_pressure"
-    if macro_context.rates_context == "duration_supported" and has_rotation:
-        return "rotation_with_duration_support"
     return macro_context.overall_regime
 
 
@@ -1974,7 +2172,15 @@ def _gpt_question_refs(
             "fx",
         )
     if any(term in question for term in ["新闻", "因果", "事件"]):
-        return (("STATE:NEWS", "DQ:NEWS"), "news")
+        return (
+            (
+                "STATE:MARKET",
+                "STATE:PORTFOLIO",
+                "PORTFOLIO:ALLOCATION",
+                "FUNDAMENTAL:STATE",
+            ),
+            "external_research",
+        )
     if any(term in question for term in ["估值", "盈利预期", "盈利修正"]):
         return (
             ("FUNDAMENTAL:STATE", "DQ:FUNDAMENTALS"),

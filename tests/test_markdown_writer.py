@@ -8,6 +8,7 @@ from app.models.analysis import (
     DataCoverage,
     DataCoverageRow,
     DailySignalSummary,
+    GptAnalysisTask,
     MarketEvidence,
     MarketState,
     MacroContext,
@@ -267,9 +268,31 @@ def test_key_evidence_separates_structure_from_short_term_and_explains_risk():
         "| Medium-term/short-term divergence | N/A | monitor | triggered | no | "
         "QQQ |" in content
     )
-    assert "Market risk: 45/100 (elevated)" in content
+    assert "Market downside risk: 45/100 (elevated)" in content
     assert "- Data-quality penalty: 20 points." in content
     assert "1. What confirms the rebound?" in content
+
+
+def test_gpt_task_reason_heading_matches_degraded_status():
+    content = render_daily_report(
+        report_date=date(2026, 7, 21),
+        price_signals={},
+        sector_rotation=sector_rotation(),
+        gpt_tasks=[
+            GptAnalysisTask(
+                "question",
+                (),
+                "output",
+                "confidence",
+                "degraded_task",
+                "degraded",
+                ("stale input",),
+            )
+        ],
+    )
+
+    assert "Degraded Reasons:" in content
+    assert "Blocked Reasons:" not in content
 
 
 def test_report_renders_deterministic_action_readiness_and_candidate():

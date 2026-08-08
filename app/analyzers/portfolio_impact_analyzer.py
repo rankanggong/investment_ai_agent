@@ -135,7 +135,7 @@ def _map_market_risk(
             MarketFactorContribution(
                 "single_asset_alert",
                 item.symbol,
-                item.points,
+                0,
                 (item.evidence_ref,),
             )
             for item in alerts

@@ -10,6 +10,7 @@ def initialize_database(db_path: Path) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         _migrate_decision_journal(conn)
+        _migrate_fundamental_asset_types(conn)
 
 
 def _migrate_decision_journal(conn: sqlite3.Connection) -> None:
@@ -19,7 +20,7 @@ def _migrate_decision_journal(conn: sqlite3.Connection) -> None:
     }
     additions = {
         "execution_status": "TEXT NOT NULL DEFAULT 'blocked'",
-        "permission_status": "TEXT NOT NULL DEFAULT 'denied'",
+        "permission_status": "TEXT NOT NULL DEFAULT 'unknown'",
         "proposed_amount": "REAL",
         "proposed_currency": "TEXT",
         "execution_reasons_json": "TEXT NOT NULL DEFAULT '[]'",
@@ -30,6 +31,19 @@ def _migrate_decision_journal(conn: sqlite3.Connection) -> None:
         if name not in columns:
             conn.execute(
                 f"ALTER TABLE decision_states ADD COLUMN {name} {definition}"
+            )
+
+
+def _migrate_fundamental_asset_types(conn: sqlite3.Connection) -> None:
+    for table in (
+        "valuation_observations",
+        "earnings_estimate_observations",
+    ):
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "asset_type" not in columns:
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN asset_type "
+                "TEXT NOT NULL DEFAULT 'unknown'"
             )
 
 

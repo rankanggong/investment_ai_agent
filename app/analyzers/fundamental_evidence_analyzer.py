@@ -43,6 +43,14 @@ def analyze_fundamental_evidence(
         reasons.append("earnings_revision_materiality_not_configured")
         if revision_status == "available":
             revision_status = "degraded"
+    if any(row.asset_type == "unknown" for row in latest_valuations):
+        reasons.append("valuation_asset_type_missing")
+        if valuation_status == "available":
+            valuation_status = "degraded"
+    if any(row.asset_type == "unknown" for row in revisions):
+        reasons.append("earnings_revision_asset_type_missing")
+        if revision_status == "available":
+            revision_status = "degraded"
     flags = _revision_flags(revisions)
     return FundamentalEvidenceState(
         valuation_status,
@@ -58,11 +66,11 @@ def _latest_valuations(
     observations: list[ValuationObservation],
     report_date: date,
 ) -> list[ValuationObservation]:
-    latest: dict[tuple[str, str, str], ValuationObservation] = {}
+    latest: dict[tuple[str, str, str, str], ValuationObservation] = {}
     for row in observations:
         if row.as_of_date > report_date:
             continue
-        key = (row.symbol, row.metric, row.source)
+        key = (row.symbol, row.asset_type, row.metric, row.source)
         if key not in latest or row.as_of_date > latest[key].as_of_date:
             latest[key] = row
     return sorted(latest.values(), key=lambda row: (row.symbol, row.metric, row.source))
@@ -74,14 +82,16 @@ def _earnings_revisions(
     report_date: date,
 ) -> list[EarningsRevision]:
     grouped: dict[
-        tuple[str, str, str, str], list[EarningsEstimateObservation]
+        tuple[str, str, str, str, str], list[EarningsEstimateObservation]
     ] = defaultdict(list)
     for row in observations:
         if row.as_of_date > report_date:
             continue
-        grouped[(row.symbol, row.fiscal_period, row.metric, row.source)].append(row)
+        grouped[
+            (row.symbol, row.asset_type, row.fiscal_period, row.metric, row.source)
+        ].append(row)
     revisions: list[EarningsRevision] = []
-    for (symbol, period, metric, source), rows in sorted(grouped.items()):
+    for (symbol, asset_type, period, metric, source), rows in sorted(grouped.items()):
         ordered = sorted(rows, key=lambda row: row.as_of_date)
         if len(ordered) < 2:
             continue
@@ -115,6 +125,7 @@ def _earnings_revisions(
                     else None
                 ),
                 source,
+                asset_type,
             )
         )
     return revisions

@@ -3,7 +3,6 @@ from datetime import date
 from pathlib import Path
 
 from app.analyzers.company_price_bounds_analyzer import analyze_company_price_bounds
-from app.analyzers.asset_event_analyzer import analyze_asset_events
 from app.analyzers.data_coverage_analyzer import analyze_data_coverage
 from app.analyzers.decision_context_analyzer import build_decision_context
 from app.analyzers.decision_evidence_analyzer import analyze_decision_evidence
@@ -13,6 +12,7 @@ from app.analyzers.daily_report_state_analyzer import (
     analyze_portfolio_summary,
     assess_market_risk,
     assess_portfolio_decision_risk,
+    build_evidence_registry,
     build_gpt_tasks,
     build_report_state,
     build_report_use_states,
@@ -21,12 +21,11 @@ from app.analyzers.daily_report_state_analyzer import (
     evaluate_strategy_rules,
     extract_report_state,
     select_key_market_evidence,
+    validate_gpt_task_evidence,
 )
 from app.analyzers.daily_signal_summary_analyzer import analyze_daily_signal_summary
 from app.analyzers.fundamental_evidence_analyzer import analyze_fundamental_evidence
 from app.analyzers.macro_context_analyzer import analyze_macro_context
-from app.analyzers.news_cluster_analyzer import analyze_news_clusters
-from app.analyzers.news_entity_linker import link_news_entities
 from app.analyzers.price_move_analyzer import analyze_price_moves
 from app.analyzers.portfolio_impact_analyzer import analyze_portfolio_impact
 from app.analyzers.report_signal_analyzer import analyze_report_signals
@@ -36,14 +35,13 @@ from app.analyzers.strategy_rule_engine import (
     evaluate_strategy_decision,
 )
 from app.config import load_report_profile, load_watchlist
-from app.models.analysis import AssetEntity
+from app.models.analysis import NewsQualityGate
 from app.outputs.markdown_writer import render_daily_report, write_daily_report
 from app.steward.models import PortfolioReportState
 from app.steward.storage import StewardRepository, initialize_steward_database
 from app.storage.db import initialize_database
 from app.storage.repositories.price_repo import PriceRepository
 from app.storage.repositories.fundamental_repo import FundamentalRepository
-from app.storage.repositories.news_repo import NewsRepository
 from app.storage.repositories.report_repo import ReportRepository
 
 
@@ -86,24 +84,20 @@ def generate_daily_report(
         history,
         watchlist.symbols_for_group("popular_companies"),
     )
-    news_candidates = [
-        item
-        for item in NewsRepository(db_path).get_recent_items(limit=200)
-        if item.published_at is not None
-        and 0 <= (effective_date - item.published_at.date()).days
-        <= report_profile.news_policy.max_age_days
-    ]
-    news_links = link_news_entities(
-        news_candidates,
-        _asset_entities(watchlist.assets),
+    # News is intentionally outside the deterministic local-data pipeline.
+    # A GPT task may research current sources, but those sources remain
+    # reference-only and cannot create or authorize a portfolio action.
+    news_quality = NewsQualityGate(
+        None,
         report_profile.news_policy.entity_precision_threshold,
+        "external_research",
+        None,
+        None,
+        "unavailable",
+        ["Current news research is delegated to a GPT task."],
     )
-    news_quality = news_links.gate
-    linked_news = (
-        news_links.linked_items if news_quality.status == "available" else []
-    )
-    news_clusters = analyze_news_clusters(linked_news)
-    asset_events = analyze_asset_events(linked_news)
+    news_clusters = []
+    asset_events = []
     fundamental_repo = FundamentalRepository(db_path)
     fundamental_state = analyze_fundamental_evidence(
         fundamental_repo.get_valuations(),
@@ -256,6 +250,10 @@ def generate_daily_report(
         use_states,
         strategy_decision,
     )
+    evidence_registry = build_evidence_registry(
+        key_evidence, strategy_rules, fundamental_state
+    )
+    validate_gpt_task_evidence(gpt_tasks, evidence_registry)
     report_state = replace(
         report_state,
         gpt_task_ids=tuple(task.task_id for task in gpt_tasks),
@@ -293,6 +291,7 @@ def generate_daily_report(
         decision_context=decision_context,
         changes=changes,
         gpt_tasks=gpt_tasks,
+        evidence_registry=evidence_registry,
         report_state=report_state,
         price_sources=price_sources,
     )
@@ -314,23 +313,6 @@ def _latest_report_date(history: dict[str, list]) -> date | None:
     if not dates:
         return None
     return max(dates)
-
-
-def _asset_entities(assets: list) -> list[AssetEntity]:
-    kind_by_type = {
-        "equity": "company",
-        "etf": "etf",
-        "index": "index",
-        "commodity": "commodity",
-    }
-    return [
-        AssetEntity(
-            asset.symbol,
-            asset.name or asset.symbol,
-            kind_by_type.get(asset.asset_type or "", "etf"),
-        )
-        for asset in assets
-    ]
 
 
 def _previous_report_file_content(

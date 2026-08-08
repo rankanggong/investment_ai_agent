@@ -17,8 +17,8 @@ class FundamentalRepository:
             conn.executemany(
                 """
                 INSERT INTO valuation_observations
-                  (symbol, as_of_date, metric, value, currency, period, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                  (symbol, asset_type, as_of_date, metric, value, currency, period, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, as_of_date, metric, source) DO UPDATE SET
                   value = excluded.value,
                   currency = excluded.currency,
@@ -26,7 +26,7 @@ class FundamentalRepository:
                 """,
                 [
                     (
-                        row.symbol, row.as_of_date.isoformat(), row.metric,
+                        row.symbol, row.asset_type, row.as_of_date.isoformat(), row.metric,
                         row.value, row.currency, row.period, row.source,
                     )
                     for row in rows
@@ -40,15 +40,15 @@ class FundamentalRepository:
             conn.executemany(
                 """
                 INSERT INTO earnings_estimate_observations
-                  (symbol, as_of_date, fiscal_period, metric, value, source)
-                VALUES (?, ?, ?, ?, ?, ?)
+                  (symbol, asset_type, as_of_date, fiscal_period, metric, value, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(
                   symbol, as_of_date, fiscal_period, metric, source
                 ) DO UPDATE SET value = excluded.value
                 """,
                 [
                     (
-                        row.symbol, row.as_of_date.isoformat(), row.fiscal_period,
+                        row.symbol, row.asset_type, row.as_of_date.isoformat(), row.fiscal_period,
                         row.metric, row.value, row.source,
                     )
                     for row in rows
@@ -59,7 +59,7 @@ class FundamentalRepository:
         with connect(self.db_path) as conn:
             rows = conn.execute(
                 """
-                SELECT symbol, as_of_date, metric, value, currency, period, source
+                SELECT symbol, asset_type, as_of_date, metric, value, currency, period, source
                 FROM valuation_observations
                 ORDER BY symbol, metric, as_of_date
                 """
@@ -68,7 +68,7 @@ class FundamentalRepository:
             ValuationObservation(
                 row["symbol"], date.fromisoformat(row["as_of_date"]),
                 row["metric"], float(row["value"]), row["source"],
-                row["currency"], row["period"],
+                row["currency"], row["period"], row["asset_type"],
             )
             for row in rows
         ]
@@ -77,7 +77,7 @@ class FundamentalRepository:
         with connect(self.db_path) as conn:
             rows = conn.execute(
                 """
-                SELECT symbol, as_of_date, fiscal_period, metric, value, source
+                SELECT symbol, asset_type, as_of_date, fiscal_period, metric, value, source
                 FROM earnings_estimate_observations
                 ORDER BY symbol, fiscal_period, metric, as_of_date
                 """
@@ -86,7 +86,7 @@ class FundamentalRepository:
             EarningsEstimateObservation(
                 row["symbol"], date.fromisoformat(row["as_of_date"]),
                 row["fiscal_period"], row["metric"], float(row["value"]),
-                row["source"],
+                row["source"], row["asset_type"],
             )
             for row in rows
         ]

@@ -18,9 +18,9 @@ from app.storage.repositories.fundamental_repo import FundamentalRepository
 def test_fundamental_csv_import_and_repository_round_trip(tmp_path):
     path = tmp_path / "fundamentals.csv"
     path.write_text(
-        "record_type,symbol,as_of_date,metric,value,period,currency,source\n"
-        "valuation,qqq,2026-07-25,forward_pe,25.5,NTM,,provider_a\n"
-        "earnings_estimate,qqq,2026-07-01,eps,10,FY2027,,provider_a\n",
+        "record_type,symbol,asset_type,as_of_date,metric,value,period,currency,source\n"
+        "valuation,qqq,etf,2026-07-25,forward_pe,25.5,NTM,,provider_a\n"
+        "earnings_estimate,qqq,etf,2026-07-01,eps,10,FY2027,,provider_a\n",
         encoding="utf-8",
     )
     imported = load_fundamental_csv(path)
@@ -32,21 +32,40 @@ def test_fundamental_csv_import_and_repository_round_trip(tmp_path):
 
     assert repo.get_valuations()[0].symbol == "QQQ"
     assert repo.get_valuations()[0].metric == "forward_pe"
+    assert repo.get_valuations()[0].asset_type == "etf"
     assert repo.get_earnings_estimates()[0].fiscal_period == "FY2027"
+
+
+def test_fundamental_csv_rejects_metric_for_wrong_asset_type(tmp_path):
+    path = tmp_path / "fundamentals.csv"
+    path.write_text(
+        "record_type,symbol,asset_type,as_of_date,metric,value,period,currency,source\n"
+        "earnings_estimate,GLD,commodity,2026-07-25,eps,1,FY2027,,provider_a\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="not valid for commodity"):
+        load_fundamental_csv(path)
 
 
 def test_fundamental_evidence_derives_material_negative_revision():
     state = analyze_fundamental_evidence(
-        [ValuationObservation("QQQ", date(2026, 7, 25), "forward_pe", 25, "a")],
+        [ValuationObservation(
+            "QQQ", date(2026, 7, 25), "forward_pe", 25, "a",
+            asset_type="etf",
+        )],
         [
             EarningsEstimateObservation(
-                "QQQ", date(2026, 7, 1), "FY2027", "eps", 10, "a"
+                "QQQ", date(2026, 7, 1), "FY2027", "eps", 10, "a",
+                asset_type="etf",
             ),
             EarningsEstimateObservation(
-                "QQQ", date(2026, 7, 25), "FY2027", "eps", 9, "a"
+                "QQQ", date(2026, 7, 25), "FY2027", "eps", 9, "a",
+                asset_type="etf",
             ),
             EarningsEstimateObservation(
-                "QQQ", date(2026, 7, 27), "FY2027", "eps", 20, "a"
+                "QQQ", date(2026, 7, 27), "FY2027", "eps", 20, "a",
+                asset_type="etf",
             ),
         ],
         FundamentalPolicy(30, 30, 0.05),

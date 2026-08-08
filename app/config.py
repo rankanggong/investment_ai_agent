@@ -12,6 +12,7 @@ _STRATEGY_METRICS = {
     "drawdown_from_252d_high",
     "vix_level_percentile_252d",
     "credit_state",
+    "credit_safety_state",
     "earnings_revision_negative",
 }
 

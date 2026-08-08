@@ -77,7 +77,7 @@ class CompanyPriceBound:
     lower_review_bound: float
     upper_review_bound: float
     basis: str
-    confidence: float
+    calculation_completeness: float
     notes: list[str] = field(default_factory=list)
 
 
@@ -328,10 +328,15 @@ class RiskAssetAlert:
 
 @dataclass(frozen=True)
 class PortfolioRiskAssessment:
-    exposure_risk: RiskAssessment
+    invested_sleeve_exposure_risk: RiskAssessment
     data_quality_risk: RiskAssessment
     decision_readiness: str
     readiness_reasons: tuple[str, ...] = ()
+
+    @property
+    def exposure_risk(self) -> RiskAssessment:
+        """Compatibility alias for the invested-sleeve-only risk scope."""
+        return self.invested_sleeve_exposure_risk
 
 
 @dataclass(frozen=True)
@@ -431,6 +436,7 @@ class ActionReadiness:
     reasons: tuple[str, ...]
     evidence_refs: tuple[str, ...] = ()
     human_approval_required: bool = True
+    veto_status: str = "not_configured"
 
 
 @dataclass(frozen=True)
@@ -441,7 +447,7 @@ class ExecutionReadiness:
     sizing_method: str | None
     reasons: tuple[str, ...]
     human_approval_required: bool = True
-    permission_status: str = "denied"
+    permission_status: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -479,6 +485,7 @@ class DecisionContext:
     candidate_symbol: str | None
     candidate_rule_id: str | None
     action_readiness_status: str
+    veto_status: str
     execution_readiness_status: str
     permission_status: str
     proposed_amount: float | None
@@ -500,7 +507,7 @@ class DecisionHistoryRecord:
     rule_states: dict[str, str]
     reasons: tuple[str, ...] = ()
     execution_status: str = "blocked"
-    permission_status: str = "denied"
+    permission_status: str = "unknown"
     proposed_amount: float | None = None
     proposed_currency: str | None = None
     execution_reasons: tuple[str, ...] = ()
@@ -558,6 +565,7 @@ class ValuationObservation:
     source: str
     currency: str | None = None
     period: str | None = None
+    asset_type: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -568,6 +576,7 @@ class EarningsEstimateObservation:
     metric: str
     value: float
     source: str
+    asset_type: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -583,6 +592,7 @@ class EarningsRevision:
     direction: str
     material: bool | None
     source: str
+    asset_type: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -663,11 +673,16 @@ class GptAnalysisTask:
     confidence_requirement: str
     task_id: str = ""
     status: str = "ready"
-    blocked_reasons: tuple[str, ...] = ()
+    status_reasons: tuple[str, ...] = ()
+
+    @property
+    def blocked_reasons(self) -> tuple[str, ...]:
+        """Compatibility alias; use status_reasons for all task states."""
+        return self.status_reasons
 
     @property
     def blocked_reason(self) -> str:
-        return "; ".join(self.blocked_reasons)
+        return "; ".join(self.status_reasons)
 
 
 @dataclass(frozen=True)
@@ -738,8 +753,8 @@ class ReportState:
     portfolio_risk: str
     portfolio_data_readiness: str
     portfolio_actionability: str
-    portfolio_exposure_risk_score: int
-    portfolio_exposure_risk_level: str
+    invested_sleeve_exposure_risk_score: int
+    invested_sleeve_exposure_risk_level: str
     portfolio_data_quality_risk_score: int
     portfolio_data_quality_risk_level: str
     news_quality: str
@@ -757,11 +772,12 @@ class ReportState:
     fx_cost_basis: float | None = None
     fx_difference_pct: float | None = None
     action_readiness_status: str = "blocked"
+    veto_status: str = "unknown"
     candidate_action: str | None = None
     candidate_symbol: str | None = None
     candidate_rule_id: str | None = None
     execution_readiness_status: str = "blocked"
-    rule_execution_permission_status: str = "denied"
+    rule_execution_permission_status: str = "unknown"
     proposed_action_amount: float | None = None
     proposed_action_currency: str | None = None
     decision_context_status: str = "blocked"

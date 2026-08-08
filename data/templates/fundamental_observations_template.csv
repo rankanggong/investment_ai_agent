@@ -1,1 +1,1 @@
-record_type,symbol,as_of_date,metric,value,period,currency,source
+record_type,symbol,asset_type,as_of_date,metric,value,period,currency,source

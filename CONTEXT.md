@@ -91,17 +91,18 @@ before entity linking. It is not yet asset evidence.
 _Avoid_: Asset Event, related article
 
 **Valuation Observation**:
-A sourced value for one named valuation metric, asset, and as-of date. It is an
-external observation, not an internally estimated fair value.
+A sourced value for one asset-type-valid valuation metric, asset, and as-of
+date. It is an external observation, not an internally estimated fair value.
 _Avoid_: Price target, intrinsic value
 
 **Earnings Estimate Observation**:
-A sourced consensus estimate for one asset, fiscal period, metric, and as-of date.
+A sourced consensus estimate for one asset, explicit asset type, fiscal period,
+type-valid metric, and as-of date.
 _Avoid_: Reported earnings, realized result
 
 **Earnings Revision**:
 The like-for-like change between the two latest Earnings Estimate Observations
-from the same source, asset, fiscal period, and metric.
+from the same source, asset, asset type, fiscal period, and metric.
 _Avoid_: Earnings growth, earnings surprise
 
 **Fundamental Evidence State**:
@@ -110,19 +111,35 @@ Revisions, including configured materiality and resulting deterministic flags.
 _Avoid_: Fundamental score, investment thesis
 
 **Decision Evidence State**:
-The quality-gated, asset-level view of Valuation Observations, Earnings
-Revisions, and linked Asset Events for current Holding Snapshots and the current
-Decision Candidate. It records evidence and review flags but does not infer
-news sentiment or create an action.
+The quality-gated, asset-level view of Valuation Observations and Earnings
+Revisions for current Holding Snapshots and the current Decision Candidate.
+Current news is a reference-only external GPT research task and is not part of
+deterministic Decision Evidence. The state records evidence and review flags but
+does not create an action.
 _Avoid_: Recommendation, conviction score, news-driven trade signal
 
 **Data Quality Gate**:
-A fail-closed decision that makes news-derived scores null and portfolio action unavailable when entity precision is below threshold.
-_Avoid_: Warning
+A fail-closed, use-specific state that prevents one analysis or action from
+claiming readiness when its required evidence is missing, stale, or invalid.
+_Avoid_: Warning, report-wide circuit breaker
 
 **Portfolio Action**:
 The availability of an explicitly configured investment rule outcome. Market evidence alone is not a portfolio action.
 _Avoid_: High-conviction label, automatic de-risk instruction
+
+**Safety Veto State**:
+The evaluated state of enabled blocking rules: `active` when a veto condition
+is confirmed, `unknown` when required veto evidence is missing, `clear` when
+configured veto conditions are evaluated and not active, and `not_configured`
+when no blocking rule exists. Both `active` and `unknown` prevent execution.
+_Avoid_: Risk flag, sell signal
+
+**Rule Execution Permission State**:
+The evaluated permission state for the selected rule:
+`not_applicable`, `unknown`, `missing`, `denied`, `not_yet_valid`, `expired`, or
+`allowed`. Only `allowed` can proceed to sizing, and human approval is still
+mandatory.
+_Avoid_: Execution authorization, order approval
 
 **Risk Cluster**:
 A configured group of correlated assets whose simultaneous signals count as

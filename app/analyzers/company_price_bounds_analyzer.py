@@ -53,7 +53,9 @@ def _bound_for_symbol(symbol: str, bars: list[PriceBar]) -> CompanyPriceBound:
         lower_review_bound=lower_bound,
         upper_review_bound=upper_bound,
         basis=basis,
-        confidence=round(min(1.0, len(closes) / MAX_LOOKBACK_ROWS), 2),
+        calculation_completeness=round(
+            min(1.0, len(closes) / MAX_LOOKBACK_ROWS), 2
+        ),
         notes=[
             (
                 f"Recent range {recent_low:.2f}-{recent_high:.2f}; "

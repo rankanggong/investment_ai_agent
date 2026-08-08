@@ -1,16 +1,13 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from pathlib import Path
 
 import app.main
 import pytest
 from app.collectors.yfinance_price_collector import YFinanceCollectionResult
-from app.collectors.google_news_collector import NewsCollectionResult
 from app.main import build_parser
 from app.models.price import PriceBar
 from app.storage.repositories.price_repo import PriceRepository
 from app.storage.repositories.fundamental_repo import FundamentalRepository
-from app.storage.repositories.news_repo import NewsRepository
-from app.models.analysis import NewsItem
 
 
 def test_cli_exposes_phase_1_commands():
@@ -31,26 +28,25 @@ def test_cli_exposes_phase_1_commands():
     assert daily_args.report_profile == app.main.DEFAULT_REPORT_PROFILE_PATH
 
 
-def test_cli_exposes_phase_3_collection_commands():
+def test_cli_exposes_fundamental_collection_but_not_news():
     parser = build_parser()
 
-    news = parser.parse_args(["collect", "news", "--google-rss"])
     fundamentals = parser.parse_args(
         ["collect", "fundamentals", "--csv", "fundamentals.csv"]
     )
 
-    assert news.collect_command == "news"
-    assert news.google_rss is True
     assert fundamentals.collect_command == "fundamentals"
     assert fundamentals.csv == Path("fundamentals.csv")
+    with pytest.raises(SystemExit):
+        parser.parse_args(["collect", "news", "--google-rss"])
 
 
 def test_fundamental_cli_imports_observations(tmp_path):
     db_path = tmp_path / "finance.db"
     csv_path = tmp_path / "fundamentals.csv"
     csv_path.write_text(
-        "record_type,symbol,as_of_date,metric,value,period,currency,source\n"
-        "valuation,QQQ,2026-07-25,forward_pe,25,NTM,,provider_a\n",
+        "record_type,symbol,asset_type,as_of_date,metric,value,period,currency,source\n"
+        "valuation,QQQ,etf,2026-07-25,forward_pe,25,NTM,,provider_a\n",
         encoding="utf-8",
     )
 
@@ -63,38 +59,6 @@ def test_fundamental_cli_imports_observations(tmp_path):
 
     assert result == 0
     assert FundamentalRepository(db_path).get_valuations()[0].value == 25
-
-
-def test_news_cli_stores_candidates(tmp_path, monkeypatch):
-    db_path = tmp_path / "finance.db"
-
-    def collect(symbols):
-        assert list(symbols) == ["SPY"]
-        return NewsCollectionResult(
-            [
-                NewsItem(
-                    "SPY fee change",
-                    "https://example.com/spy",
-                    "Example",
-                    datetime(2026, 7, 25, tzinfo=timezone.utc),
-                    "SPY",
-                    "test",
-                )
-            ],
-            [],
-        )
-
-    monkeypatch.setattr(app.main, "collect_google_news", collect)
-
-    result = app.main.main(
-        [
-            "collect", "news", "--google-rss", "--symbols", "SPY",
-            "--db", str(db_path),
-        ]
-    )
-
-    assert result == 0
-    assert NewsRepository(db_path).get_recent_items()[0].related_symbol == "SPY"
 
 
 def test_cli_exposes_steward_commands():

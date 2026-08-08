@@ -32,6 +32,7 @@ def analyze_decision_evidence(
     if candidate:
         relevant_symbols.add(candidate)
     trusted_events = asset_events if news_quality.status == "available" else []
+    local_news_expected = news_quality.status != "external_research"
 
     assets = tuple(
         _asset_evidence(
@@ -54,14 +55,16 @@ def analyze_decision_evidence(
     evidence_refs = tuple(
         dict.fromkeys(ref for item in assets for ref in item.evidence_refs)
     )
-    reasons = [*fundamental.reasons, *news_quality.reasons]
+    reasons = [*fundamental.reasons]
+    if local_news_expected:
+        reasons.extend(news_quality.reasons)
     if not relevant_symbols:
         reasons.append("decision_relevant_assets_not_identified")
     if uncovered_symbols:
         reasons.append(
             "decision_evidence_missing_for:" + ",".join(uncovered_symbols)
         )
-    if news_quality.status != "available":
+    if local_news_expected and news_quality.status != "available":
         reasons.append(f"news_entity_pipeline_{news_quality.status}")
     if not evidence_refs:
         status = "blocked"
@@ -70,7 +73,7 @@ def analyze_decision_evidence(
         uncovered_symbols
         or fundamental.valuation_status != "available"
         or fundamental.earnings_revision_status != "available"
-        or news_quality.status != "available"
+        or (local_news_expected and news_quality.status != "available")
     ):
         status = "degraded"
     else:

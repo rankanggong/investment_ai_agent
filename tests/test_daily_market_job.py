@@ -64,17 +64,20 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     fundamental_repo.upsert_valuations(
         [
             ValuationObservation(
-                "SPY", date(2026, 7, 20), "forward_pe", 22.0, "provider_a"
+                "SPY", date(2026, 7, 20), "forward_pe", 22.0, "provider_a",
+                asset_type="etf",
             )
         ]
     )
     fundamental_repo.upsert_earnings_estimates(
         [
             EarningsEstimateObservation(
-                "QQQ", date(2026, 7, 1), "FY2027", "eps", 10, "provider_a"
+                "QQQ", date(2026, 7, 1), "FY2027", "eps", 10, "provider_a",
+                asset_type="etf",
             ),
             EarningsEstimateObservation(
-                "QQQ", date(2026, 7, 20), "FY2027", "eps", 9, "provider_a"
+                "QQQ", date(2026, 7, 20), "FY2027", "eps", 9, "provider_a",
+                asset_type="etf",
             ),
         ]
     )
@@ -153,9 +156,10 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     assert "Status: degraded" in content
     assert "- Weighted all-in cost basis: 6.79" in content
     assert "- Reason: usd_cnh_spot_unavailable" in content
-    assert "Action Readiness: ready" in content
+    assert "Action Readiness: vetoed" in content
+    assert "- Veto status: active" in content
     assert "Execution Readiness: blocked" in content
-    assert "rule_execution_permission_not_configured" in content
+    assert "- Rule execution permission: not_applicable" in content
     assert "Decision Context:" in content
     assert "- Transition: baseline" in content
     assert "Decision evidence: degraded" in content
@@ -164,28 +168,31 @@ def test_daily_market_report_loads_portfolio_summary_and_account_detail(tmp_path
     assert "| us_equity | 100.00% | VOO |" in content
     assert "Portfolio impact status: blocked" in content
     assert "- Impact reason: market_analysis_not_available" in content
-    assert '"action_readiness_status": "ready"' in content
-    assert '"rule_execution_permission_status": "missing"' in content
+    assert '"action_readiness_status": "vetoed"' in content
+    assert '"rule_execution_permission_status": "not_applicable"' in content
     assert '"portfolio_factor_exposures": {"us_equity": 1.0}' in content
     assert "Valuation status: available" in content
     assert "Earnings revision status: available" in content
     assert "| QQQ | FY2027 | eps |" in content
-    assert "News Entity Pipeline:" in content
-    assert "- Status: available" in content
-    assert "- Deduplicated asset events: 1" in content
+    assert "Current News Research:" in content
+    assert "- Local news input: not required" in content
+    assert "- GPT task: research_external_news" in content
+    assert "https://example.com/spy-fee" not in content
+    assert "News causal-analysis availability gate" not in content
     assert '"valuation_status": "available"' in content
     assert '"earnings_revision_status": "available"' in content
     assert '"decision_evidence_status": "degraded"' in content
-    assert '"news_entity_pipeline_status": "available"' in content
+    assert '"news_entity_pipeline_status": "external_research"' in content
     assert '"QQQ:FY2027:eps": "negative"' in content
     assert '"qqq_pause_on_negative_revision": "triggered"' in content
     assert '"gpt_task_ids": [' in content
+    assert '"research_external_news"' in content
     decisions = ReportRepository(finance_db).list_decision_states()
     assert len(decisions) == 1
     assert decisions[0].report_date == date(2026, 7, 21)
-    assert decisions[0].readiness_status == "ready"
+    assert decisions[0].readiness_status == "vetoed"
     assert decisions[0].execution_status == "blocked"
-    assert decisions[0].permission_status == "missing"
+    assert decisions[0].permission_status == "not_applicable"
     assert decisions[0].context["candidate_rule_id"] == (
         "qqq_pause_on_negative_revision"
     )

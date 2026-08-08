@@ -10,6 +10,7 @@ from app.analyzers.daily_report_state_analyzer import (
     assess_market_risk,
     assess_portfolio_decision_risk,
     build_gpt_tasks,
+    build_evidence_registry,
     build_report_state,
     build_report_use_states,
     combine_data_quality,
@@ -17,7 +18,9 @@ from app.analyzers.daily_report_state_analyzer import (
     extract_report_state,
     select_key_market_evidence,
     serialize_report_state,
+    validate_gpt_task_evidence,
 )
+import pytest
 from app.config import (
     DailyBudgetPolicy,
     ReportProfile,
@@ -28,6 +31,7 @@ from app.models.analysis import (
     DataCoverageRow,
     DailySignalSummary,
     MacroContext,
+    GptAnalysisTask,
     NewsQualityGate,
     PriceSignal,
 )
@@ -164,8 +168,9 @@ def test_market_risk_counts_correlated_assets_once_per_cluster():
     assert [item.cluster for item in result.clusters] == ["mega_cap_companies"]
     assert [item.symbol for item in result.single_asset_alerts] == ["TLT"]
     assert result.explanations[0].startswith(
-        "Unusual-move risk: 1 single-asset alerts and 1 correlated clusters"
+        "Abnormal-move alerts: 1 single-asset alerts and 1 correlated clusters"
     )
+    assert result.components["downside_clusters"] == 0
 
 
 def test_key_evidence_uses_medium_term_trend_and_standardized_metrics():
@@ -362,7 +367,33 @@ def test_market_and_portfolio_state_round_trip_and_compare():
     assert any("Earnings revision directions" in item for item in changes)
     assert any("Decision evidence status" in item for item in changes)
     assert any("News entity pipeline status" in item for item in changes)
+    exposure_change = next(
+        item for item in changes if "Portfolio factor exposures" in item
+    )
+    assert exposure_change.startswith("[low]")
+    assert "added us_equity" in exposure_change
+    assert "{" not in exposure_change
     assert compare_report_states(restored, state) == ["No state changes detected."]
+
+
+def test_evidence_registry_rejects_unresolved_or_duplicate_refs():
+    registry = build_evidence_registry([], [])
+    valid = GptAnalysisTask(
+        "question", ("STATE:MARKET",), "output", "confidence", "valid"
+    )
+    validate_gpt_task_evidence([valid], registry)
+
+    unresolved = replace(valid, task_id="unresolved", evidence_refs=("MISSING",))
+    with pytest.raises(ValueError, match="unresolved Evidence Refs"):
+        validate_gpt_task_evidence([unresolved], registry)
+
+    duplicate = replace(
+        valid,
+        task_id="duplicate",
+        evidence_refs=("STATE:MARKET", "STATE:MARKET"),
+    )
+    with pytest.raises(ValueError, match="duplicate Evidence Refs"):
+        validate_gpt_task_evidence([duplicate], registry)
 
 
 def test_extract_report_state_renames_legacy_structural_trend_values():
@@ -422,6 +453,47 @@ def test_gpt_tasks_include_evidence_refs_and_output_contract():
     assert "confidence" in tasks[0].confidence_requirement.lower()
 
 
+def test_gpt_news_task_is_external_research_with_source_requirements():
+    summary = analyze_portfolio_summary(None, ReportProfile(), {})
+    market = assess_market_risk({}, analyze_market_breadth({}, {}))
+    states = build_report_use_states(
+        market,
+        MacroContext("mixed", "mixed", "mixed", "mixed", "mixed", []),
+        type(
+            "Rotation",
+            (),
+            {"strong_sectors": [], "weak_sectors": [], "risk_on_score": 0.0},
+        )(),
+        DataCoverage([], [], status="available"),
+        summary,
+        assess_portfolio_decision_risk(summary),
+        NewsQualityGate(
+            None,
+            0.8,
+            "external_research",
+            None,
+            None,
+            "unavailable",
+            ["Delegated to GPT."],
+        ),
+    )
+
+    task = build_gpt_tasks(
+        ReportProfile(gpt_questions=["检索近期新闻并提供参考资料。"]),
+        ["No state changes detected."],
+        [],
+        [],
+        states,
+    )[0]
+
+    assert task.task_id == "research_external_news"
+    assert task.status == "ready"
+    assert "direct URL" in task.expected_output
+    assert "publication date" in task.expected_output
+    assert "research was unavailable" in task.expected_output
+    assert "STATE:NEWS" not in task.evidence_refs
+
+
 def test_use_specific_states_do_not_block_market_for_stale_portfolio_or_news():
     state = portfolio_state()
     stale_state = PortfolioReportState(
@@ -473,7 +545,7 @@ def test_use_specific_states_do_not_block_market_for_stale_portfolio_or_news():
     )
 
     assert states.market.risk == "low"
-    assert states.market.regime == "rotation_under_rate_pressure"
+    assert states.market.regime == "mixed"
     assert states.market.actionability == "available"
     assert states.portfolio.risk == "unknown"
     assert states.portfolio.data_readiness == "blocked"
@@ -519,6 +591,9 @@ def test_gpt_portfolio_task_is_blocked_and_uses_portfolio_refs():
     assert "STATE:PORTFOLIO" in task.evidence_refs
     assert "PORTFOLIO:ALLOCATION" in task.evidence_refs
     assert "do not infer a decision" in task.expected_output
+    assert task.blocked_reasons.count(
+        "target allocations are not configured"
+    ) == 1
 
 
 def test_gpt_factor_impact_task_uses_portfolio_analysis_not_action_gate():

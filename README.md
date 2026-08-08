@@ -9,17 +9,16 @@ The active workflow is intentionally data-first:
   context, plan impact, and company price review bounds.
 - Personal financial analysis uses one supplied state CSV for cash positions,
   holding snapshots, and FX conversions.
-- Candidate news collection is optional. Collected headlines must pass entity
-  linking, quality gating, and asset-specific event deduplication before they
-  appear as evidence.
+- Current news is not a required local input. The daily report creates a GPT
+  research task that requests verifiable current sources; its output is
+  reference-only and cannot create or authorize a portfolio action.
 
-The news evidence path is fail-closed: query symbols are collection provenance,
-not entity links. Articles must pass ticker/name entity linking before they can
-be clustered; ETF, company, index, and commodity events use separate schemas
-and are deduplicated at the event level. If entity precision is below the
-configured threshold, news analysis is blocked. Passing the gate makes linked
-news available as evidence;
-it does not create a score or portfolio action.
+Legacy news collector code and stored rows remain for reversibility, but news
+collection is not exposed by the active CLI and the daily-report job does not
+read those rows. The external-research task requires direct URLs, publisher,
+publication date, and event date. If the model cannot browse or verify sources,
+it must report that research is unavailable instead of supplying news from
+memory.
 
 The workflow remains local and data-first:
 
@@ -34,7 +33,6 @@ python -m app.main init-db
 python -m app.main collect prices --csv path/to/prices.csv
 python -m app.main collect prices --yfinance
 python -m app.main collect fundamentals --csv path/to/fundamentals.csv
-python -m app.main collect news --google-rss --symbols SPY QQQ
 python -m app.main report daily
 ```
 
@@ -44,12 +42,24 @@ view; full account detail is kept in the appendix. Use `--steward-db` to select
 a non-default steward database.
 
 Report-specific portfolio targets, daily investment budget, action sizing,
-default-deny rule execution permissions, USD daily spend, and standing GPT questions are configured in
-`config/report_profile.json`. Target weights must sum to `1.0`; the target
+default-deny rule execution permissions, USD daily spend, and standing GPT
+questions are configured in `config/report_profile.json`. Target weights must
+sum to `1.0`; the target
 policy also states the comparison basis and tolerance. The daily budget states
 its currency and optional per-action bounds. Unconfigured values remain `N/A`;
 the agent does not invent allocation targets, sizing fractions, or spending
 assumptions.
+
+Input locations are intentionally split by ownership:
+
+- strategy targets, budget, USD daily spend, action sizing, and execution
+  permissions: `config/report_profile.json`;
+- current cash positions, holding snapshots, and completed FX conversions:
+  import a CSV based on `data/steward/templates/steward_state_template.csv`;
+- sourced valuation and like-for-like earnings estimates: import a CSV based on
+  `data/templates/fundamental_observations_template.csv`;
+- current news and official references: `research_external_news` GPT task; no
+  local news CSV or database rows are required.
 
 CSV imports require these columns:
 
@@ -60,11 +70,20 @@ symbol,date,open,high,low,close,adjusted_close,volume
 Fundamental CSV imports use:
 
 ```text
-record_type,symbol,as_of_date,metric,value,period,currency,source
+record_type,symbol,asset_type,as_of_date,metric,value,period,currency,source
 ```
 
-`record_type` is `valuation` or `earnings_estimate`. Earnings revisions compare
-only observations with the same symbol, fiscal period, metric, and source.
+`record_type` is `valuation` or `earnings_estimate`; `asset_type` is `equity`,
+`etf`, `index`, or `commodity`, and each type accepts only its own valuation and
+estimate metrics. Equity valuation metrics are `forward_pe`, `trailing_pe`,
+`price_to_book`, `price_to_sales`, and `ev_to_ebitda`; ETF metrics are
+`forward_pe`, `trailing_pe`, `price_to_book`, and `distribution_yield`; index
+metrics are `forward_pe`, `trailing_pe`, `price_to_book`, and `earnings_yield`;
+commodity valuation uses `spot_premium`. Earnings-estimate metrics are
+`eps`/`revenue`/`ebitda` for equities and `eps`/`eps_growth`/`revenue_growth`
+for ETFs and indexes; commodities do not accept earnings estimates. Earnings
+revisions compare only observations with the same symbol, asset type, fiscal
+period, metric, and source.
 Start from `data/templates/fundamental_observations_template.csv`; the template
 contains only the required header and does not supply example values.
 
@@ -103,19 +122,18 @@ The daily report contains:
   trend from 5-day movement and showing drawdown from the 252-day high;
 - triggered or near-threshold deterministic rules with 60D absolute-move
   z-score, 20D ATR multiple, and 252D absolute-move percentile;
-- separate market risk, portfolio exposure risk, and portfolio data-quality
+- separate market downside risk, invested-sleeve exposure risk, and portfolio data-quality
   risk scores, with single-asset alerts distinct from correlated clusters;
 - configured cost-basis factor-tag exposure and an explicit mapping from market
   risk components/clusters/asset alerts to structured portfolio impact
   contributions and a dominant-factor screening score;
 - sourced valuation observations and like-for-like earnings estimate revisions,
   with freshness and materiality gates;
-- candidate-news entity linking, precision gating, and deduplicated
-  asset-specific events;
+- a reference-only GPT research task for current news and official sources;
 - asset-level Decision Evidence for current holdings and the Decision Candidate;
   valuation remains an observation without an action threshold, earnings
-  revisions retain direction/materiality, and news events require primary-source
-  review rather than inferred sentiment;
+  revisions retain direction/materiality, while current news remains outside
+  deterministic decision evidence;
 - explicit FX state with USD coverage, latest USD/CNH spot, weighted all-in
   conversion cost basis, and their percentage difference;
   tracked-universe breadth, VIX, and RSP-versus-SPY evidence;
@@ -185,8 +203,15 @@ Decision Candidate. A matching `action_sizing` entry can then calculate a
 proposed amount as a configured fraction of the Daily Investment Budget,
 subject to its optional minimum and maximum. A matching, currently valid
 `rule_execution_permissions` entry with `status: allowed` is also required;
-missing permission means denied. The result always awaits human approval and
+missing permission blocks execution. The result always awaits human approval and
 never authorizes or executes an order.
+
+Blocking rules expose an explicit safety-veto state: `active`, `unknown`,
+`clear`, or `not_configured`. Missing veto evidence is `unknown` and blocks the
+candidate. Evaluated execution permission is one of `not_applicable`, `unknown`,
+`missing`, `denied`, `not_yet_valid`, `expired`, or `allowed`; only `allowed`
+may reach sizing, and it still cannot authorize execution without human
+approval.
 
 ## Amazon Bedrock
 

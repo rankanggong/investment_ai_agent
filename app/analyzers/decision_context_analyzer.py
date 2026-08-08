@@ -116,6 +116,7 @@ def build_decision_context(
         candidate_symbol=readiness.symbol,
         candidate_rule_id=readiness.rule_id,
         action_readiness_status=readiness.status,
+        veto_status=readiness.veto_status,
         execution_readiness_status=execution.status,
         permission_status=execution.permission_status,
         proposed_amount=execution.proposed_amount,

@@ -33,7 +33,7 @@ def test_company_price_bounds_uses_recent_range_and_volatility_band():
     assert bound.lower_review_bound == approx(100.0)
     assert bound.upper_review_bound == approx(176.318102, rel=1e-6)
     assert bound.basis == "60D range + volatility band"
-    assert bound.confidence == 1.0
+    assert bound.calculation_completeness == 1.0
     assert bound.notes == [
         "Recent range 100.00-159.00; volatility band 141.68-176.32."
     ]

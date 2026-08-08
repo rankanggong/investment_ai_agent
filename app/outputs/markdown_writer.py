@@ -67,6 +67,7 @@ def render_daily_report(
     changes: list[str] | None = None,
     gpt_questions: list[str] | None = None,
     gpt_tasks: list[GptAnalysisTask] | None = None,
+    evidence_registry: dict[str, str] | None = None,
     report_state: ReportState | None = None,
     price_sources: dict[str, str] | None = None,
     portfolio_impact: PortfolioImpactAnalysis | None = None,
@@ -85,11 +86,11 @@ def render_daily_report(
     effective_portfolio_decision_risk = (
         portfolio_decision_risk
         or PortfolioRiskAssessment(
-            exposure_risk=RiskAssessment(
+            invested_sleeve_exposure_risk=RiskAssessment(
                 score=0,
                 level="unknown",
                 explanations=["Portfolio exposure risk was not generated."],
-                scope="portfolio_exposure",
+                scope="invested_sleeve_exposure",
             ),
             data_quality_risk=RiskAssessment(
                 score=0,
@@ -177,9 +178,11 @@ def render_daily_report(
     lines.extend(_render_key_evidence(effective_evidence))
     lines.extend(["", *_render_metric_definitions()])
     lines.extend(["", "Market Breadth:"])
-    lines.extend(["Evidence Refs: BREADTH:MARKET, BREADTH:SECTOR_ROTATION"])
+    lines.extend([
+        "Evidence Refs: BREADTH:MARKET, BREADTH:VIX, BREADTH:SECTOR_ROTATION"
+    ])
     lines.extend(_render_market_breadth(market_breadth))
-    lines.extend(["", "News Entity Pipeline:", ""])
+    lines.extend(["", "Current News Research:", ""])
     lines.extend(_render_news_pipeline(news_quality, news_clusters, asset_events))
     lines.extend(
         [
@@ -193,13 +196,13 @@ def render_daily_report(
     lines.extend(_render_decision_context(decision_context))
     lines.extend(["", "Rule Evaluations:", ""])
     lines.extend(_render_triggered_rules(effective_rules))
-    lines.extend(["", f"Market risk: {effective_risk.score}/100 ({effective_risk.level})"])
+    lines.extend(["", f"Market downside risk: {effective_risk.score}/100 ({effective_risk.level})"])
     lines.extend(f"- {reason}" for reason in effective_risk.explanations)
     lines.extend(_render_unusual_move_groups(effective_risk))
     lines.extend(
         [
             "",
-            f"Portfolio exposure risk: "
+            f"Invested-sleeve exposure risk: "
             f"{effective_portfolio_decision_risk.exposure_risk.score}/100 "
             f"({effective_portfolio_decision_risk.exposure_risk.level})",
         ]
@@ -230,6 +233,8 @@ def render_daily_report(
         ]
     )
     if gpt_tasks:
+        lines.extend(_render_evidence_registry(evidence_registry or {}))
+        lines.append("")
         lines.extend(_render_gpt_tasks(gpt_tasks))
     else:
         questions = gpt_questions or ["No GPT analysis task was generated."]
@@ -301,12 +306,13 @@ def _render_executive_states(
         f"{readiness.status if readiness is not None else 'blocked'}; "
         f"candidate is "
         f"{readiness.candidate_action if readiness and readiness.candidate_action else 'none'}; "
+        f"veto is {readiness.veto_status if readiness is not None else 'unknown'}; "
         "human approval is required.",
         "",
         f"[STATE:EXECUTION] Execution readiness is "
         f"{execution.status if execution is not None else 'blocked'}; "
         f"rule permission is "
-        f"{execution.permission_status if execution is not None else 'denied'}; "
+        f"{execution.permission_status if execution is not None else 'unknown'}; "
         f"proposed amount is "
         f"{_format_money(execution.proposed_amount, execution.currency or '') if execution else 'N/A'}; "
         "no execution is authorized.",
@@ -552,8 +558,8 @@ def _render_fundamental_state(
         "",
         "Valuation observations:",
         "",
-        "| Evidence Ref | Symbol | As Of | Metric | Value | Currency | Period | Source |",
-        "|---|---|---|---|---:|---|---|---|",
+        "| Evidence Ref | Symbol | As Of | Metric | Value | Currency | Period | Source | Asset Type |",
+        "|---|---|---|---|---:|---|---|---|---|",
     ]
     if state.valuations:
         lines.extend(
@@ -561,17 +567,17 @@ def _render_fundamental_state(
             f"{item.as_of_date.isoformat()}:{item.source} | {item.symbol} | "
             f"{item.as_of_date.isoformat()} | {item.metric} | "
             f"{item.value:.4f} | {item.currency or 'N/A'} | "
-            f"{item.period or 'N/A'} | {item.source} |"
+            f"{item.period or 'N/A'} | {item.source} | {item.asset_type} |"
             for item in state.valuations
         )
     else:
-        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A | N/A |")
+        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |")
     lines.extend([
         "",
         "Earnings estimate revisions:",
         "",
-        "| Evidence Ref | Symbol | Fiscal Period | Metric | Previous | Current | Change | Direction | Material | Source |",
-        "|---|---|---|---|---:|---:|---:|---|---|---|",
+        "| Evidence Ref | Symbol | Fiscal Period | Metric | Previous | Current | Change | Direction | Material | Source | Asset Type |",
+        "|---|---|---|---|---:|---:|---:|---|---|---|---|",
     ])
     if state.revisions:
         lines.extend(
@@ -582,11 +588,11 @@ def _render_fundamental_state(
             f"{item.current_value:.4f} ({item.current_date.isoformat()}) | "
             f"{_format_percent(item.change_pct)} | {item.direction} | "
             f"{'yes' if item.material else 'no' if item.material is False else 'N/A'} | "
-            f"{item.source} |"
+            f"{item.source} | {item.asset_type} |"
             for item in state.revisions
         )
     else:
-        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |")
+        lines.append("| None | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |")
     lines.extend(f"- Reason: {reason}" for reason in state.reasons)
     return lines
 
@@ -596,6 +602,14 @@ def _render_news_pipeline(
     clusters: list[NewsCluster] | None,
     events: list[AssetEvent] | None,
 ) -> list[str]:
+    if quality is not None and quality.status == "external_research":
+        return [
+            "- Local news input: not required",
+            "- GPT task: research_external_news",
+            "- Use: sourced context only; cannot create or authorize an action",
+            "- Requirement: direct URLs, publisher, publication date, and event date",
+            "- Fallback: state that research is unavailable when sources cannot be verified",
+        ]
     lines = [
         "Evidence Ref: NEWS:ENTITY_PIPELINE",
         f"- Status: {quality.status if quality else 'blocked'}",
@@ -702,6 +716,7 @@ def _render_decision_context(context: DecisionContext | None) -> list[str]:
         f"{context.candidate_symbol or 'N/A'}",
         f"- Action → execution: {context.action_readiness_status} → "
         f"{context.execution_readiness_status}",
+        f"- Safety veto: {context.veto_status}",
         f"- Permission: {context.permission_status}",
     ]
     lines.extend(f"- Context reason: {reason}" for reason in context.reasons)
@@ -715,7 +730,7 @@ def _render_decision_context(context: DecisionContext | None) -> list[str]:
         f"Decision evidence: {evidence.status}",
         f"- Valuation: {evidence.valuation_status}",
         f"- Earnings revision: {evidence.earnings_revision_status}",
-        f"- News entity pipeline: {evidence.news_entity_status}",
+        f"- Current news source: {evidence.news_entity_status}",
         "- Uncovered relevant symbols: "
         + (", ".join(evidence.uncovered_symbols) or "none"),
     ])
@@ -819,6 +834,7 @@ def _render_action_readiness(
         "Evidence Ref: STATE:ACTION_READINESS",
         "",
         f"Action Readiness: {readiness.status}",
+        f"- Veto status: {readiness.veto_status}",
         f"- Candidate action: {readiness.candidate_action or 'none'}",
         f"- Symbol: {readiness.symbol or 'N/A'}",
         f"- Triggering rule: {readiness.rule_id or 'N/A'}",
@@ -878,10 +894,31 @@ def _render_gpt_tasks(tasks: list[GptAnalysisTask]) -> list[str]:
             f"Confidence Requirement: {task.confidence_requirement}",
             "",
         ])
-        if task.blocked_reasons:
-            lines.extend(["Blocked Reasons:"])
-            lines.extend(f"- {reason}" for reason in task.blocked_reasons)
+        if task.status_reasons:
+            reason_label = (
+                "Blocked Reasons:"
+                if task.status == "blocked"
+                else "Degraded Reasons:"
+                if task.status == "degraded"
+                else "Status Reasons:"
+            )
+            lines.extend([reason_label])
+            lines.extend(f"- {reason}" for reason in task.status_reasons)
             lines.append("")
+    return lines
+
+
+def _render_evidence_registry(registry: dict[str, str]) -> list[str]:
+    lines = [
+        "### Evidence Registry",
+        "",
+        "| Evidence Ref | Canonical meaning |",
+        "|---|---|",
+    ]
+    lines.extend(
+        f"| {ref} | {_escape_cell(description)} |"
+        for ref, description in sorted(registry.items())
+    )
     return lines
 
 
@@ -1038,6 +1075,13 @@ def _data_quality_ref(row: DataCoverageRow) -> str:
             else "STATE"
         )
         return f"DQ:PORTFOLIO:{suffix}"
+    if row.category == "Fundamentals":
+        suffix = (
+            "VALUATION"
+            if row.item == "valuation observations"
+            else "EARNINGS_REVISION"
+        )
+        return f"DQ:FUNDAMENTALS:{suffix}"
     return "DQ:MARKET"
 
 
@@ -1137,6 +1181,8 @@ def _render_macro_context(macro_context: MacroContext | None) -> list[str]:
         return ["Macro context was not generated."]
 
     lines = [
+        "Evidence Ref: MACRO:CREDIT",
+        "",
         f"Rates: {macro_context.rates_context}",
         "",
         f"USD: {macro_context.usd_context}",
@@ -1180,7 +1226,7 @@ def _render_company_price_bounds(
     if company_price_bounds.bounds:
         lines.extend(
             [
-                "| Company | Latest | Lower Review Bound | Upper Review Bound | Basis | Confidence |",
+                "| Company | Latest | Lower Review Bound | Upper Review Bound | Basis | Calculation completeness |",
                 "|---|---:|---:|---:|---|---:|",
             ]
         )
@@ -1189,7 +1235,7 @@ def _render_company_price_bounds(
                 f"| {bound.symbol} | {_format_decimal(bound.latest)} | "
                 f"{_format_decimal(bound.lower_review_bound)} | "
                 f"{_format_decimal(bound.upper_review_bound)} | "
-                f"{bound.basis} | {bound.confidence:.2f} |"
+                f"{bound.basis} | {_format_percent(bound.calculation_completeness)} |"
             )
     else:
         lines.append("No company price bounds available.")
