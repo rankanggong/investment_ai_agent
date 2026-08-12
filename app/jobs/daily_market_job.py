@@ -186,7 +186,7 @@ def generate_daily_report(
         fundamental_flags=fundamental_state.fundamental_flags,
         execution_context=StrategyExecutionContext(
             effective_date,
-            report_profile.daily_budget,
+            report_profile.budget_for(portfolio_summary.base_currency),
             report_profile.action_sizing,
             report_profile.rule_execution_permissions,
             portfolio_summary.investment_cash,

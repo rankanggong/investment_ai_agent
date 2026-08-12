@@ -111,6 +111,9 @@ def analyze_portfolio_summary(
             freshness=unavailable_freshness,
             allocation_tolerance=profile.target_allocation.tolerance,
             daily_budget_currency=profile.daily_budget.currency,
+            daily_investment_budgets={
+                budget.currency: budget.amount for budget in profile.daily_budgets
+            },
         )
 
     fx_rates = _fx_rates(portfolio_state, profile.base_currency, price_signals)
@@ -171,7 +174,7 @@ def analyze_portfolio_summary(
         notes.append("Target allocations are not configured.")
     elif profile.target_allocation.tolerance is None:
         notes.append("Target allocation tolerance is not configured.")
-    if profile.daily_budget.amount is None:
+    if not any(budget.amount is not None for budget in profile.daily_budgets):
         notes.append("Daily investment budget is not configured.")
     if cash_by_role["unknown"]:
         notes.append("Unknown-role cash is excluded from investment cash.")
@@ -241,6 +244,9 @@ def analyze_portfolio_summary(
         freshness=freshness,
         allocation_tolerance=profile.target_allocation.tolerance,
         daily_budget_currency=profile.daily_budget.currency,
+        daily_investment_budgets={
+            budget.currency: budget.amount for budget in profile.daily_budgets
+        },
     )
 
 
@@ -1690,8 +1696,10 @@ def build_gpt_tasks(
             if any(term in question for term in ["新闻", "近期事件", "参考资料"])
         ),
         (
-            "检索并核验与当前市场状态、持仓和决策候选相关的近期新闻与"
-            "官方资料；哪些事实可能解释或反驳现有判断？"
+            "优先关注科技股，检索并核验与当前市场状态、持仓和决策候选"
+            "相关的近期新闻、研究报告与官方资料；重点说明市场资金流向，"
+            "包括券商、银行、政府或公共部门以及个人投资者的资金动向，并"
+            "指出哪些事实可能解释或反驳现有判断。"
         ),
     )
     questions.append(
@@ -1721,9 +1729,11 @@ def build_gpt_tasks(
     external_research_output = (
         "Current source summary with direct URL, publisher, publication date, and "
         "event date for each material item; separate sourced facts from model "
-        "interpretation; explain relevance and counterevidence; state that research "
-        "was unavailable if browsing or source verification is unavailable; do not "
-        "turn news into an action or override deterministic rules."
+        "interpretation; prioritize technology stocks and summarize market money "
+        "flows, distinguishing broker, bank, government or public-sector, and retail "
+        "investor activity when supported; explain relevance and counterevidence; "
+        "state that research was unavailable if browsing or source verification is "
+        "unavailable; do not turn news into an action or override deterministic rules."
     )
     return [
         GptAnalysisTask(

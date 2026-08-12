@@ -103,6 +103,21 @@ filled. Use `--period 1y` to force a full one-year refresh.
 Successful symbols are saved even when another symbol fails. Failed symbols are
 listed in the command output.
 
+Configure independent daily investment budgets by currency in
+`config/report_profile.json`:
+
+```json
+"daily_budgets": [
+  {"amount": 1000, "currency": "CNY"},
+  {"amount": 50, "currency": "USD", "maximum_action_amount": 40}
+]
+```
+
+Each currency may appear only once. The legacy singular `daily_budget` object
+is still accepted, but it cannot be combined with `daily_budgets`. Strategy
+execution currently selects the budget matching the portfolio base currency;
+all configured budgets are shown in the daily report.
+
 `USD/CNH` is stored under that domain symbol while Yahoo retrieval tries
 `CNH=X` first and `USDCNH=X` when the primary code returns no history. The
 watchlist also includes the US 10-year Treasury yield (`^TNX`) and US Dollar

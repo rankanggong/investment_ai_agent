@@ -206,3 +206,40 @@ def test_load_report_profile_reads_structured_target_budget_and_action_sizing(
     assert profile.fundamental_policy.earnings_revision_materiality == 0.05
     assert profile.news_policy.entity_precision_threshold == 0.9
     assert profile.news_policy.max_age_days == 5
+
+
+def test_load_report_profile_reads_daily_budgets_by_currency(tmp_path):
+    path = tmp_path / "report-profile.json"
+    path.write_text(
+        json.dumps({
+            "base_currency": "CNY",
+            "daily_budgets": [
+                {"amount": 1000, "currency": "cny"},
+                {"amount": 50, "currency": "usd", "maximum_action_amount": 40},
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    profile = load_report_profile(path)
+
+    assert profile.daily_investment_budget == 1000
+    assert profile.budget_for("CNY").amount == 1000
+    assert profile.budget_for("usd").maximum_action_amount == 40
+    assert profile.budget_for("EUR") is None
+
+
+def test_load_report_profile_rejects_duplicate_daily_budget_currency(tmp_path):
+    path = tmp_path / "report-profile.json"
+    path.write_text(
+        json.dumps({
+            "daily_budgets": [
+                {"amount": 1000, "currency": "CNY"},
+                {"amount": 500, "currency": "cny"},
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unique currencies"):
+        load_report_profile(path)

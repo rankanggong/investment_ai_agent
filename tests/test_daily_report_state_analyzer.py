@@ -128,6 +128,7 @@ def test_portfolio_summary_separates_cash_roles_and_invested_holdings():
     assert result.investment_cash == 8400.0
     assert result.reserved_cash == 5000.0
     assert result.usd_coverage_days == 120.0
+    assert result.daily_investment_budgets == {"CNY": None}
     assert "invested holding cost" in result.notes[0]
 
 
@@ -491,6 +492,9 @@ def test_gpt_news_task_is_external_research_with_source_requirements():
     assert "direct URL" in task.expected_output
     assert "publication date" in task.expected_output
     assert "research was unavailable" in task.expected_output
+    assert "prioritize technology stocks" in task.expected_output
+    assert "market money flows" in task.expected_output
+    assert "retail investor activity" in task.expected_output
     assert "STATE:NEWS" not in task.evidence_refs
 
 

@@ -188,6 +188,26 @@ def test_portfolio_summary_and_account_details_are_separated():
     assert "| bank | usd | USD | 9000 | investment_cash | 2026-07-19 |" in content
 
 
+def test_portfolio_summary_renders_daily_budgets_by_currency():
+    content = render_daily_report(
+        report_date=date(2026, 7, 21),
+        price_signals={},
+        sector_rotation=sector_rotation(),
+        portfolio_summary=PortfolioSummary(
+            base_currency="CNY",
+            total_holding_cost=None,
+            allocations=[],
+            daily_investment_budget=1000,
+            usd_cash=0,
+            usd_daily_spend=None,
+            usd_coverage_days=None,
+            daily_investment_budgets={"CNY": 1000, "USD": 50},
+        ),
+    )
+
+    assert "Daily investment budgets: CNY 1000.00, USD 50.00" in content
+
+
 def test_report_renders_use_specific_states_and_metric_definitions():
     states = ReportUseStates(
         market=MarketState(

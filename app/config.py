@@ -79,6 +79,7 @@ class ReportProfile:
     strategy_rules: tuple[StrategyRuleDefinition, ...] = ()
     target_allocation: TargetAllocationPolicy | None = None
     daily_budget: DailyBudgetPolicy | None = None
+    daily_budgets: tuple[DailyBudgetPolicy, ...] = ()
     action_sizing: tuple[ActionSizingPolicy, ...] = ()
     rule_execution_permissions: tuple[RuleExecutionPermission, ...] = ()
     portfolio_factors: tuple[PortfolioFactorDefinition, ...] = ()
@@ -91,9 +92,31 @@ class ReportProfile:
         target = self.target_allocation or TargetAllocationPolicy(
             weights=dict(self.target_allocations)
         )
-        budget = self.daily_budget or DailyBudgetPolicy(
-            amount=self.daily_investment_budget,
-            currency=self.base_currency,
+        budgets = self.daily_budgets
+        if self.daily_budget is not None:
+            if budgets and self.daily_budget not in budgets:
+                raise ValueError("daily_budget and daily_budgets disagree")
+            budgets = budgets or (self.daily_budget,)
+        if not budgets:
+            budgets = (DailyBudgetPolicy(
+                amount=self.daily_investment_budget,
+                currency=self.base_currency,
+            ),)
+        currencies = [budget.currency.upper() for budget in budgets]
+        if len(currencies) != len(set(currencies)):
+            raise ValueError("daily budgets must use unique currencies")
+        budgets = tuple(
+            DailyBudgetPolicy(
+                budget.amount,
+                budget.currency.upper(),
+                budget.minimum_action_amount,
+                budget.maximum_action_amount,
+            )
+            for budget in budgets
+        )
+        budget = next(
+            (item for item in budgets if item.currency == self.base_currency.upper()),
+            budgets[0],
         )
         if self.target_allocations and target.weights != self.target_allocations:
             raise ValueError("legacy and structured target allocations disagree")
@@ -105,7 +128,15 @@ class ReportProfile:
         object.__setattr__(self, "target_allocation", target)
         object.__setattr__(self, "target_allocations", dict(target.weights))
         object.__setattr__(self, "daily_budget", budget)
+        object.__setattr__(self, "daily_budgets", budgets)
         object.__setattr__(self, "daily_investment_budget", budget.amount)
+
+    def budget_for(self, currency: str) -> DailyBudgetPolicy | None:
+        normalized = currency.upper()
+        return next(
+            (budget for budget in self.daily_budgets if budget.currency == normalized),
+            None,
+        )
 
 
 def load_report_profile(path: Path | None) -> ReportProfile:
@@ -113,7 +144,7 @@ def load_report_profile(path: Path | None) -> ReportProfile:
         return ReportProfile()
     data = json.loads(path.read_text(encoding="utf-8"))
     target_policy = _load_target_allocation(data)
-    budget_policy = _load_daily_budget(data)
+    budget_policies = _load_daily_budgets(data)
     strategy_rules = _load_strategy_rules(data.get("strategy_rules", []))
     action_sizing = _load_action_sizing(data.get("action_sizing", []))
     permissions = _load_rule_execution_permissions(
@@ -145,7 +176,7 @@ def load_report_profile(path: Path | None) -> ReportProfile:
         gpt_questions=[str(question) for question in data.get("gpt_questions", [])],
         strategy_rules=strategy_rules,
         target_allocation=target_policy,
-        daily_budget=budget_policy,
+        daily_budgets=budget_policies,
         action_sizing=action_sizing,
         rule_execution_permissions=permissions,
         portfolio_factors=_load_portfolio_factors(
@@ -181,12 +212,32 @@ def _load_target_allocation(data: dict[str, Any]) -> TargetAllocationPolicy:
     return TargetAllocationPolicy(basis, targets, tolerance)
 
 
-def _load_daily_budget(data: dict[str, Any]) -> DailyBudgetPolicy:
+def _load_daily_budgets(data: dict[str, Any]) -> tuple[DailyBudgetPolicy, ...]:
+    raw_items = data.get("daily_budgets")
+    if raw_items is not None:
+        if "daily_budget" in data or "daily_investment_budget" in data:
+            raise ValueError(
+                "daily_budgets cannot be combined with legacy daily budget fields"
+            )
+        if not isinstance(raw_items, list) or not raw_items:
+            raise ValueError("daily_budgets must be a non-empty list")
+        budgets = tuple(_load_daily_budget_item(raw, data) for raw in raw_items)
+        currencies = [budget.currency for budget in budgets]
+        if len(currencies) != len(set(currencies)):
+            raise ValueError("daily budgets must use unique currencies")
+        return budgets
+
     raw = data.get("daily_budget")
     if raw is None:
         raw = {"amount": data.get("daily_investment_budget")}
+    return (_load_daily_budget_item(raw, data),)
+
+
+def _load_daily_budget_item(
+    raw: Any, data: dict[str, Any]
+) -> DailyBudgetPolicy:
     if not isinstance(raw, dict):
-        raise ValueError("daily_budget must be an object")
+        raise ValueError("each daily budget must be an object")
     amount = _optional_non_negative(raw.get("amount"), "daily budget amount")
     minimum = _optional_non_negative(
         raw.get("minimum_action_amount"), "minimum action amount"

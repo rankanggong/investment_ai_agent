@@ -5,12 +5,20 @@
     "weights": {},
     "tolerance": null
   },
-  "daily_budget": {
-    "amount": null,
-    "currency": "CNY",
-    "minimum_action_amount": null,
-    "maximum_action_amount": null
-  },
+  "daily_budgets": [
+    {
+      "amount": 120,
+      "currency": "CNY",
+      "minimum_action_amount": 30,
+      "maximum_action_amount": 120
+    },
+    {
+      "amount": 2,
+      "currency": "USD",
+      "minimum_action_amount": 2,
+      "maximum_action_amount": 2
+    }
+  ],
   "usd_daily_spend": null,
   "action_sizing": [],
   "rule_execution_permissions": [],
@@ -129,6 +137,6 @@
     "USD/CNH、美元指数与利率数据是否改变换汇时点的观察条件？",
     "在目标仓位与每日额度配置完整后，最大的配置缺口是什么？",
     "估值观测与盈利预期修正是否一致，哪些数据缺口会阻断结论？",
-    "检索并核验与当前市场状态、持仓和决策候选相关的近期新闻与官方资料；哪些事实可能解释或反驳现有判断？"
+    "优先关注科技股，检索并核验与当前市场状态、持仓和决策候选相关的近期新闻、研究报告与官方资料；重点说明市场资金流向，包括券商、银行、政府或公共部门以及个人投资者的资金动向，并指出哪些事实可能解释或反驳现有判断。"
   ]
 }

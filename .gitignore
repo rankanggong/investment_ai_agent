@@ -6,3 +6,4 @@ __pycache__/
 data/**/*.db
 data/reports/*.md
 data/steward/steward_state.csv
+scripts/ec2_collect_and_sync.sh

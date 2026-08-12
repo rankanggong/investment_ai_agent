@@ -230,6 +230,7 @@ class PortfolioSummary:
     freshness: PortfolioFreshness | None = None
     allocation_tolerance: float | None = None
     daily_budget_currency: str | None = None
+    daily_investment_budgets: dict[str, float | None] = field(default_factory=dict)
 
     @property
     def investable_cash(self) -> float | None:

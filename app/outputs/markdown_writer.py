@@ -470,8 +470,18 @@ def _render_portfolio_summary(
     lines.extend(
         [
             "",
-            f"Daily investment budget: "
-            f"{_format_money(summary.daily_investment_budget, summary.daily_budget_currency or summary.base_currency)}",
+            (
+                "Daily investment budgets: "
+                + ", ".join(
+                    _format_money(amount, currency)
+                    for currency, amount in summary.daily_investment_budgets.items()
+                )
+                if summary.daily_investment_budgets
+                else "Daily investment budget: " + _format_money(
+                    summary.daily_investment_budget,
+                    summary.daily_budget_currency or summary.base_currency,
+                )
+            ),
             "",
             f"Target allocation tolerance: {_format_percent(summary.allocation_tolerance)}",
             "",
