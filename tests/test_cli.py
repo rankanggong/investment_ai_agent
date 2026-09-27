@@ -74,6 +74,16 @@ def test_cli_exposes_steward_commands():
     assert import_args.csv == Path("steward-state.csv")
     report_args = parser.parse_args(["steward", "report"])
     assert report_args.steward_command == "report"
+    income_expense_args = parser.parse_args(
+        ["steward", "income-expense", "import", "--pdf", "statement.pdf"]
+    )
+    assert income_expense_args.steward_command == "income-expense"
+    assert income_expense_args.pdf == Path("statement.pdf")
+    summary_args = parser.parse_args(
+        ["steward", "income-expense", "summary", "--month", "2026-08"]
+    )
+    assert summary_args.income_expense_command == "summary"
+    assert summary_args.month == "2026-08"
 
     with pytest.raises(SystemExit):
         parser.parse_args(["steward", "import", "--inbox", "statements"])
