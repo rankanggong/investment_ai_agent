@@ -5,7 +5,9 @@ from typing import Literal
 
 
 EntryType = Literal["income", "expense"]
-EntryCategory = Literal["income", "essential", "discretionary", "investment"]
+EntryCategory = Literal[
+    "income", "essential", "discretionary", "investment", "excluded"
+]
 
 
 @dataclass(frozen=True)

@@ -206,6 +206,67 @@ Cash rows require `cash_role` set to `investment_cash`, `investment_source`,
 from an account name. Legacy `investable` and `unclassified` values remain
 importable and are normalized to the canonical roles.
 
+### Daily income and expense data
+
+The separate `data/steward/income_expense.db` holds bank statement rows,
+manual entries, adjustments, monthly budgets, and an audit log. It is not read
+by the portfolio steward report. Import a supported CMB or ICBC PDF and view a
+monthly summary with:
+
+```bash
+python -m app.main steward income-expense import --pdf path/to/statement.pdf
+python -m app.main steward income-expense summary --month 2026-09
+```
+
+Interactive callers use the functions in
+`app.steward.income_expense.operations`: `preview_import` returns row counts,
+dates, category totals, and a file hash; `confirm_import` checks that hash before
+writing; `list_entries` returns references such as `pdf:123` and `manual:1`;
+`add_entry`, `adjust_entry`, `set_budget`, and `get_month_report` operate on the
+same local database. Every manual change requires an actor and leaves an audit
+record. Adjustments can change date, amount, category, or summary while the
+original PDF row stays intact. Set category to `excluded` for a transfer that
+should not affect income or spending totals. A saved budget takes precedence
+over the historical estimate; explicit calculation arguments take precedence
+over a saved budget.
+
+### Discord income and expense bot
+
+The optional Discord bot uses a Gateway connection and registers English slash
+commands in one server. Install the extra dependency and run it from the
+repository directory:
+
+```bash
+python -m pip install -e '.[discord]'
+export FINANCE_AGENT_DISCORD_GUILD_ID='your-server-id'
+export FINANCE_AGENT_DISCORD_USER_ID='your-user-id'
+export FINANCE_AGENT_INCOME_EXPENSE_DB_PATH='/absolute/path/income_expense.db'
+# Supply FINANCE_AGENT_DISCORD_TOKEN via the server's secret manager.
+finance-agent-discord
+```
+
+Keep the token in a secret store on the server rather than in the repository or
+shell history. The bot registers commands for the configured server at startup
+and accepts interactions only from the configured user ID. Responses are
+ephemeral. Message content intent and inbound HTTP ports are not needed.
+
+- `/statement import pdf:<attachment>` previews PDF rows and totals, then offers
+  **Confirm import** and **Cancel** buttons. The temporary upload is removed
+  after confirmation, cancellation, or a ten-minute timeout.
+- `/ledger list month:YYYY-MM` shows recent entries and references for editing.
+- `/ledger add date_iso:YYYY-MM-DD amount:<decimal> kind:<choice>
+  category:<choice> summary:<text>` adds a manual entry.
+- `/ledger adjust reference:<pdf:ID|manual:ID>` accepts optional `category`,
+  `date_iso`, `amount`, and `summary` fields.
+- `/budget set month:YYYY-MM expected_income:<decimal>
+  essential_budget:<decimal> investment_target:<decimal>
+  safety_buffer:<decimal>` stores a month's budget.
+- `/report month month:YYYY-MM` shows totals and the remaining allowance.
+
+All commands accept CNY by default where currency is optional. Bank PDFs and
+SQLite data stay on the machine running the bot. Give the bot access only to a
+private server or channel; file uploads themselves are handled by Discord.
+
 Strategy rules live in `config/report_profile.json`. Rules declare an ID,
 symbol, candidate action, priority, optional safety-blocking behavior, and typed
 conditions. Supported metrics are `drawdown_from_252d_high`,

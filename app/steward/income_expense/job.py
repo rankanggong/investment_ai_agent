@@ -9,6 +9,7 @@ from pathlib import Path
 
 from app.steward.income_expense.models import IncomeExpenseEntry
 from app.steward.income_expense.storage import (
+    effective_entries_sql,
     initialize_income_expense_database,
     store_entries,
 )
@@ -192,14 +193,16 @@ def summarize_month(
     }
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT category, entry_type, amount
-            FROM income_expense_entries
+            FROM ({effective_entries_sql()})
             WHERE substr(transaction_date, 1, 7) = ? AND currency = ?
             """,
             (month, currency.upper()),
         ).fetchall()
     for category, entry_type, amount in rows:
+        if category == "excluded":
+            continue
         if category == "investment" and entry_type == "income":
             continue
         totals[category] += Decimal(amount)
@@ -225,6 +228,22 @@ def calculate_monthly_allowance(
     investment_rate: Decimal = Decimal("0.20"),
     buffer_rate: Decimal = Decimal("0.10"),
 ) -> MonthlyAllowance:
+    from app.steward.income_expense.operations import get_budget
+
+    budget = get_budget(db_path, summary.month, summary.currency)
+    if budget is not None:
+        expected_income = (
+            expected_income if expected_income is not None else budget.expected_income
+        )
+        essential_budget = (
+            essential_budget if essential_budget is not None else budget.essential_budget
+        )
+        investment_target = (
+            investment_target if investment_target is not None else budget.investment_target
+        )
+        safety_buffer = (
+            safety_buffer if safety_buffer is not None else budget.safety_buffer
+        )
     year, month_number = _parse_month(summary.month)
     effective_date = as_of or date.today()
     if (effective_date.year, effective_date.month) != (year, month_number):
@@ -337,9 +356,9 @@ def _history_averages(
         months = [
             row[0]
             for row in conn.execute(
-                """
+                f"""
                 SELECT DISTINCT substr(transaction_date, 1, 7) AS month
-                FROM income_expense_entries
+                FROM ({effective_entries_sql()})
                 WHERE substr(transaction_date, 1, 7) < ? AND currency = ?
                 ORDER BY month DESC
                 LIMIT 3
@@ -352,22 +371,20 @@ def _history_averages(
         placeholders = ", ".join("?" for _ in months)
         rows = conn.execute(
             f"""
-            SELECT substr(transaction_date, 1, 7), category, entry_type,
-                   SUM(CAST(amount AS NUMERIC))
-            FROM income_expense_entries
+            SELECT category, entry_type, amount
+            FROM ({effective_entries_sql()})
             WHERE substr(transaction_date, 1, 7) IN ({placeholders})
               AND currency = ?
-            GROUP BY substr(transaction_date, 1, 7), category, entry_type
             """,
             (*months, currency),
         ).fetchall()
     income = Decimal("0")
     essential = Decimal("0")
-    for _, category, entry_type, amount in rows:
+    for category, entry_type, amount in rows:
         if category == "income":
-            income += Decimal(str(amount))
+            income += Decimal(amount)
         elif category == "essential" and entry_type == "expense":
-            essential += Decimal(str(amount))
+            essential += Decimal(amount)
     count = len(months)
     return income / count, essential / count, count
 

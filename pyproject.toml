@@ -11,9 +11,11 @@ dependencies = ["boto3>=1.34", "pypdf>=4.0", "yfinance>=0.2.40"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+discord = ["discord.py>=2.5,<3"]
 
 [project.scripts]
 finance-agent = "app.main:main"
+finance-agent-discord = "app.steward.income_expense.discord_bot:main"
 
 [tool.setuptools.packages.find]
 include = ["app*"]

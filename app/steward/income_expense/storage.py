@@ -35,7 +35,75 @@ CREATE TABLE IF NOT EXISTS income_expense_entries (
   UNIQUE(source_hash, source_row_index),
   FOREIGN KEY(source_hash) REFERENCES income_expense_sources(source_hash)
 );
+
+CREATE TABLE IF NOT EXISTS income_expense_manual_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  transaction_date TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  entry_type TEXT NOT NULL CHECK(entry_type IN ('income', 'expense')),
+  category TEXT NOT NULL,
+  amount TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  account_label TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS income_expense_adjustments (
+  entry_kind TEXT NOT NULL CHECK(entry_kind IN ('pdf', 'manual')),
+  entry_id INTEGER NOT NULL,
+  transaction_date TEXT,
+  amount TEXT,
+  category TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(entry_kind, entry_id)
+);
+
+CREATE TABLE IF NOT EXISTS income_expense_budgets (
+  month TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  expected_income TEXT,
+  essential_budget TEXT,
+  investment_target TEXT,
+  safety_buffer TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(month, currency)
+);
+
+CREATE TABLE IF NOT EXISTS income_expense_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL,
+  target TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  before_json TEXT,
+  after_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
+
+
+_EFFECTIVE_ENTRIES = """
+SELECT 'pdf' AS entry_kind, e.id AS entry_id,
+       COALESCE(a.transaction_date, e.transaction_date) AS transaction_date,
+       e.currency, e.entry_type, COALESCE(a.category, e.category) AS category,
+       COALESCE(a.amount, e.amount) AS amount,
+       COALESCE(a.summary, e.summary) AS summary
+FROM income_expense_entries e
+LEFT JOIN income_expense_adjustments a
+  ON a.entry_kind = 'pdf' AND a.entry_id = e.id
+UNION ALL
+SELECT 'manual', m.id, COALESCE(a.transaction_date, m.transaction_date),
+       m.currency, m.entry_type,
+       COALESCE(a.category, m.category), COALESCE(a.amount, m.amount),
+       COALESCE(a.summary, m.summary)
+FROM income_expense_manual_entries m
+LEFT JOIN income_expense_adjustments a
+  ON a.entry_kind = 'manual' AND a.entry_id = m.id
+"""
+
+
+def effective_entries_sql() -> str:
+    return _EFFECTIVE_ENTRIES
 
 
 def initialize_income_expense_database(db_path: Path) -> None:
@@ -98,6 +166,18 @@ def store_entries(
                   summary = excluded.summary,
                   channel = excluded.channel,
                   raw_text = excluded.raw_text
+                WHERE institution IS NOT excluded.institution
+                   OR account_label IS NOT excluded.account_label
+                   OR transaction_date IS NOT excluded.transaction_date
+                   OR transaction_time IS NOT excluded.transaction_time
+                   OR currency IS NOT excluded.currency
+                   OR entry_type IS NOT excluded.entry_type
+                   OR category IS NOT excluded.category
+                   OR amount IS NOT excluded.amount
+                   OR balance IS NOT excluded.balance
+                   OR summary IS NOT excluded.summary
+                   OR channel IS NOT excluded.channel
+                   OR raw_text IS NOT excluded.raw_text
                 """,
                 (
                     source_hash,
